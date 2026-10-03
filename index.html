@@ -79,6 +79,32 @@
   select:disabled { cursor: not-allowed; color: var(--text-muted); }
   input:focus, select:focus { border-color: var(--kalari-gold); background-color: #fff; }
   [aria-invalid="true"] { border-color: var(--kalari-red) !important; }
+  /* type-ahead name search */
+  .combo { position: relative; }
+  .combo input { padding-right: 44px; }
+  .combo.picked input { border-color: var(--kalari-gold); background-color: #fff; font-weight: 600; }
+  .combo-clear {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    width: 36px; height: 36px; border: 0; border-radius: 50%; cursor: pointer;
+    background: transparent; color: var(--text-muted); font-size: 20px; line-height: 1;
+  }
+  .combo-clear:hover { background: var(--bg-parchment); color: var(--text-dark); }
+  .combo-list {
+    position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 10;
+    margin: 0; padding: 6px; list-style: none; max-height: 320px; overflow-y: auto;
+    background: #fff; border: 1px solid var(--border-color); border-radius: 10px;
+    box-shadow: 0 12px 28px rgba(34,30,29,.12);
+  }
+  .combo-list li {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+    padding: 12px; border-radius: 7px; cursor: pointer; font-size: 15.5px;
+  }
+  .combo-list li[aria-selected="true"], .combo-list li:hover { background: var(--bg-parchment); }
+  .combo-list li[aria-selected="true"] { box-shadow: inset 3px 0 0 var(--kalari-gold); }
+  .combo-list .sid { font-size: 12.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; flex: none; }
+  .combo-list mark { background: none; color: var(--kalari-red); font-weight: 700; }
+  .combo-list .none { cursor: default; color: var(--text-muted); font-size: 14px; line-height: 1.45; display: block; }
+  .combo-list .none:hover { background: none; }
   .hint { font-size: 12.5px; color: var(--text-muted); margin: 6px 0 0; line-height: 1.45; }
 
   /* class checkboxes on the register form */
@@ -158,8 +184,14 @@
 
     <div id="regularFields">
       <div class="form-group">
-        <label for="studentSelect">Select Your Name</label>
-        <select id="studentSelect"><option value="">Select a class first</option></select>
+        <label for="studentInput">Your Name</label>
+        <div class="combo" id="studentCombo">
+          <input type="text" id="studentInput" role="combobox" aria-autocomplete="list" aria-expanded="false"
+                 aria-controls="studentList" autocomplete="off" autocorrect="off" autocapitalize="words" spellcheck="false"
+                 placeholder="Select a class first" disabled>
+          <button type="button" class="combo-clear" id="studentClear" aria-label="Clear name" hidden>&times;</button>
+          <ul class="combo-list" id="studentList" role="listbox" aria-label="Matching students" hidden></ul>
+        </div>
         <p class="hint" id="studentHint" hidden></p>
       </div>
     </div>
@@ -295,26 +327,113 @@ function renderCheckIn() {
   renderStudents();
 }
 
+/* --- type-ahead name search (replaces a long dropdown) --- */
+let picked = null;     // { id, name } chosen from the list
+let matches = [];      // current suggestions
+let active = -1;       // keyboard-highlighted suggestion
+const MAX_MATCHES = 8;
+
 function renderStudents() {
-  const ss = $('studentSelect'), hint = $('studentHint');
+  const input = $('studentInput'), hint = $('studentHint');
   const cid = $('classSelect').value;
-  const keep = ss.value || (me && me.id) || '';
-  ss.textContent = '';
+  const list = cid ? studentsIn(cid) : [];
+  const keep = (picked && picked.id) || (me && me.id) || '';
+  closeList();
   hint.hidden = true;
-  if (!cid) { ss.append(new Option('Select a class first', '')); ss.disabled = true; return; }
-  const list = studentsIn(cid);
-  ss.disabled = !list.length;
+  input.disabled = !list.length;
+  if (!cid) { pick(null); input.placeholder = 'Select a class first'; return; }
   if (!list.length) {
-    ss.append(new Option('No students in this class yet', ''));
+    pick(null);
+    input.placeholder = 'No students in this class yet';
     hint.textContent = 'Not enrolled yet? Register below, or check in as a Drop-in.';
     hint.hidden = false;
     return;
   }
-  ss.append(new Option('-- Select your name --', ''));
-  list.forEach(s => ss.append(new Option(s.name, s.id)));
-  ss.value = list.some(s => s.id === keep) ? keep : '';
+  input.placeholder = 'Start typing your name';
+  pick(list.find(s => s.id === keep) || null);
   hint.textContent = "Can't find your name? Ask at the office to add you to this class.";
   hint.hidden = false;
+}
+
+function pick(s) {
+  picked = s;
+  const input = $('studentInput');
+  input.value = s ? s.name : '';
+  $('studentCombo').classList.toggle('picked', !!s);
+  $('studentClear').hidden = !s;
+  if (s) invalid(input, false);
+}
+
+// rank: name starts with query > a word starts with it > contains it > ID match
+function findStudents(q) {
+  const list = studentsIn($('classSelect').value);
+  q = q.trim().toLowerCase();
+  if (!q) return [];
+  const scored = [];
+  list.forEach(s => {
+    const n = s.name.toLowerCase();
+    const score = n.startsWith(q) ? 0 : n.split(/\s+/).some(w => w.startsWith(q)) ? 1 : n.includes(q) ? 2 : s.id.toLowerCase().includes(q) ? 3 : -1;
+    if (score >= 0) scored.push([score, s]);
+  });
+  return scored.sort((a, b) => a[0] - b[0] || a[1].name.localeCompare(b[1].name)).map(x => x[1]);
+}
+
+function highlight(name, q) {
+  const frag = document.createDocumentFragment();
+  q = q.trim();
+  const i = q ? name.toLowerCase().indexOf(q.toLowerCase()) : -1;
+  if (i < 0) { frag.append(name); return frag; }
+  frag.append(name.slice(0, i), el('mark', null, name.slice(i, i + q.length)), name.slice(i + q.length));
+  return frag;
+}
+
+function openList() {
+  const input = $('studentInput'), ul = $('studentList');
+  const q = input.value;
+  if (!q.trim()) return closeList();
+  const all = findStudents(q);
+  matches = all.slice(0, MAX_MATCHES);
+  ul.textContent = '';
+  if (!matches.length) {
+    ul.append(el('li', 'none', `No one called "${q.trim()}" in this class. Check the spelling, or switch to Drop-in.`));
+  }
+  matches.forEach((s, i) => {
+    const li = el('li');
+    li.id = 'opt-' + i;
+    li.setAttribute('role', 'option');
+    const nm = el('span'); nm.append(highlight(s.name, q));
+    li.append(nm, el('span', 'sid', s.id));
+    li.addEventListener('mousedown', e => e.preventDefault()); // keep focus in the input
+    li.addEventListener('click', () => choose(i));
+    ul.append(li);
+  });
+  if (all.length > MAX_MATCHES) ul.append(el('li', 'none', `${all.length - MAX_MATCHES} more. Keep typing to narrow it down.`));
+  ul.hidden = false;
+  input.setAttribute('aria-expanded', 'true');
+  setActive(matches.length ? 0 : -1);
+}
+
+function setActive(i) {
+  active = i;
+  $('studentList').querySelectorAll('li[role=option]').forEach((li, j) => li.setAttribute('aria-selected', j === i));
+  const input = $('studentInput');
+  if (i >= 0) { input.setAttribute('aria-activedescendant', 'opt-' + i); $('opt-' + i).scrollIntoView({ block: 'nearest' }); }
+  else input.removeAttribute('aria-activedescendant');
+}
+
+function closeList() {
+  $('studentList').hidden = true;
+  $('studentInput').setAttribute('aria-expanded', 'false');
+  $('studentInput').removeAttribute('aria-activedescendant');
+  active = -1;
+}
+
+function choose(i) {
+  const s = matches[i];
+  if (!s) return;
+  pick(s);
+  closeList();
+  $('checkInMsg').hidden = true;
 }
 
 function setMode(m) {
@@ -346,9 +465,18 @@ function submitCheckIn(e) {
   const ts = new Date().toISOString();
 
   if (mode === 'Regular') {
-    const ss = $('studentSelect');
-    const s = studentsIn(cls.id).find(x => x.id === ss.value);
-    if (invalid(ss, !s)) { say('checkInMsg', 'error', 'Please select your name.'); if (!ss.disabled) ss.focus(); return; }
+    const input = $('studentInput');
+    // accept an exactly typed name even if it wasn't tapped in the list
+    if (!picked) {
+      const exact = findStudents(input.value).filter(x => x.name.toLowerCase() === input.value.trim().toLowerCase());
+      if (exact.length === 1) pick(exact[0]);
+    }
+    const s = picked && studentsIn(cls.id).find(x => x.id === picked.id);
+    if (invalid(input, !s)) {
+      say('checkInMsg', 'error', input.value.trim() ? 'Please choose your name from the list.' : 'Please type your name and choose it from the list.');
+      if (!input.disabled) { input.focus(); openList(); }
+      return;
+    }
     if (isMarked(cls.id + '|' + s.id)) {
       say('checkInMsg', 'info', [{ b: s.name }, ' is already checked in for ', { b: cls.name }, ' today.']);
       return;
@@ -437,7 +565,7 @@ async function submitRegister(e) {
     LS.set('kg_me', me);
     if (!out.existing) LS.set('kg_lastClass', body.classIds[0]);
     $('regForm').reset();
-    $('classSelect').value = ''; $('studentSelect').value = ''; // next check-in screen picks the new student + class
+    $('classSelect').value = ''; picked = null; // next check-in screen picks the new student + class
     $('iName').textContent = out.existing ? `${name}, you're already registered.` : `Welcome to Kalarigram, ${firstName(name)}.`;
     $('iSid').textContent = out.id;
     $('iNote').textContent = out.existing
@@ -516,7 +644,22 @@ async function load() {
 $('btnReg').onclick = () => setMode('Regular');
 $('btnDrop').onclick = () => setMode('Drop-in');
 $('classSelect').addEventListener('change', () => { invalid($('classSelect'), false); $('checkInMsg').hidden = true; renderStudents(); });
-$('studentSelect').addEventListener('change', () => { invalid($('studentSelect'), false); $('checkInMsg').hidden = true; });
+$('studentInput').addEventListener('input', () => {
+  if (picked) { picked = null; $('studentCombo').classList.remove('picked'); $('studentClear').hidden = true; }
+  invalid($('studentInput'), false);
+  $('checkInMsg').hidden = true;
+  openList();
+});
+$('studentInput').addEventListener('focus', () => { if (picked) $('studentInput').select(); else openList(); });
+$('studentInput').addEventListener('blur', () => setTimeout(closeList, 120));
+$('studentInput').addEventListener('keydown', e => {
+  const open = !$('studentList').hidden;
+  if (e.key === 'ArrowDown') { e.preventDefault(); if (!open) openList(); else if (matches.length) setActive((active + 1) % matches.length); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); if (open && matches.length) setActive((active - 1 + matches.length) % matches.length); }
+  else if (e.key === 'Enter' && open && active >= 0) { e.preventDefault(); choose(active); }
+  else if (e.key === 'Escape' && open) { e.preventDefault(); closeList(); }
+});
+$('studentClear').addEventListener('click', () => { pick(null); $('studentInput').focus(); });
 ['dName', 'dPhone', 'rName', 'rPhone', 'rEmail', 'rEmergency'].forEach(id => $(id).addEventListener('input', () => invalid($(id), false)));
 $('checkInForm').addEventListener('submit', submitCheckIn);
 $('regForm').addEventListener('submit', submitRegister);
