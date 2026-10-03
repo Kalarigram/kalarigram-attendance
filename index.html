@@ -3,294 +3,223 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#7a2e12">
-<title>Kalarigram Attendance</title>
+<meta name="theme-color" content="#FDFBF7">
+<title>Kalarigram Check-In</title>
+<link rel="icon" href="https://static.wixstatic.com/media/664a97_0bcab977d50d47f494807c03716ff3e2~mv2.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Anek+Latin:wdth,wght@75..125,300..800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --plaster: #f3efe8;   /* lime-washed wall */
-    --paper:   #fbf9f5;
-    --soot:    #26180f;   /* lamp-black ink */
-    --dust:    #7b6a5d;   /* muted text */
-    --line:    #e2d9cc;
-    --kalari:  #7a2e12;   /* brand red, the earth of the pit */
-    --kalari-d:#5c210b;
-    --brass:   #b8862b;
-    --brass-l: #e9c46a;
-    --leaf:    #3d6b36;   /* banana leaf: present */
-    --leaf-bg: #eef3ea;
-    --err:     #a3271b;
-    --font: "Anek Latin", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    --r-s: 10px; --r-l: 18px;
+    --kalari-red: #A0402C;
+    --kalari-red-hover: #863322;
+    --kalari-gold: #C88D32;
+    --bg-parchment: #FDFBF7;
+    --card-bg: #FFFFFF;
+    --text-dark: #221E1D;
+    --text-muted: #6B6563;
+    --border-color: #E8E2D9;
+    --ok-bg: #EAF4EC; --ok-ink: #1E6B37; --ok-line: #C4E3CC;
+    --err-bg: #FDF0ED; --err-line: #F5C6BC;
   }
   * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; }
-  body {
-    margin: 0; min-height: 100dvh;
-    font: 400 17px/1.45 var(--font); font-variation-settings: "wdth" 100;
-    background: var(--plaster); color: var(--soot);
-    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
-  }
-  button, input { font: inherit; color: inherit; }
-  button { cursor: pointer; }
-  :focus-visible { outline: 3px solid var(--brass); outline-offset: 2px; }
   [hidden] { display: none !important; }
+  body {
+    margin: 0; min-height: 100vh; min-height: 100dvh;
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-parchment); color: var(--text-dark);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: calc(24px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, select { font: inherit; color: inherit; }
+  :focus-visible { outline: 3px solid rgba(200,141,50,.55); outline-offset: 2px; }
 
-  /* ---------- top bar ---------- */
-  .top {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    max-width: 560px; margin: 0 auto; padding: 14px 20px 0;
+  .container {
+    width: 100%; max-width: 420px;
+    background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 16px;
+    padding: 32px 24px 28px; box-shadow: 0 10px 30px rgba(34,30,29,.06);
   }
-  .wordmark {
-    font-weight: 700; font-size: 15px; letter-spacing: .02em; color: var(--kalari);
-    font-variation-settings: "wdth" 115;
+  .brand-header { text-align: center; margin-bottom: 4px; }
+  .brand-logo { display: block; width: 180px; max-width: 80%; height: auto; margin: 0 auto 12px; }
+  .subtitle {
+    font-family: 'Cinzel', Georgia, serif; font-weight: 700; font-size: 13px;
+    letter-spacing: 1.5px; text-transform: uppercase; color: var(--kalari-gold); margin: 0;
   }
-  #status { font-size: 13px; color: var(--dust); }
-  #status.pending { color: var(--brass); }
+  .divider { height: 1px; background: linear-gradient(to right, transparent, var(--border-color), transparent); margin: 20px 0 24px; }
 
-  main { max-width: 560px; margin: 0 auto; padding: 8px 20px 40px; }
+  /* ---- toggle ---- */
+  .btn-toggle-group {
+    display: flex; padding: 4px; margin-bottom: 22px;
+    background: var(--bg-parchment); border: 1px solid var(--border-color); border-radius: 10px;
+  }
+  .btn-toggle {
+    flex: 1; padding: 10px 14px; border: 0; border-radius: 8px; cursor: pointer;
+    font-size: 14px; font-weight: 600; background: transparent; color: var(--text-muted);
+    transition: background .2s ease, color .2s ease, box-shadow .2s ease;
+  }
+  .btn-toggle[aria-pressed="true"] { background: var(--kalari-red); color: #fff; box-shadow: 0 2px 8px rgba(160,64,44,.25); }
 
-  /* ---------- shared ---------- */
-  h1 {
-    font-weight: 750; font-variation-settings: "wdth" 78;
-    font-size: clamp(40px, 12vw, 56px); line-height: .95; letter-spacing: -.01em;
-    margin: 18px 0 6px; color: var(--soot);
+  /* ---- fields ---- */
+  .form-group { margin-bottom: 18px; }
+  label, .legend { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .opt { color: var(--text-muted); font-weight: 500; }
+  input[type=text], input[type=tel], input[type=email], select {
+    width: 100%; min-height: 48px; padding: 12px 14px;
+    border: 1.5px solid var(--border-color); border-radius: 8px;
+    font-size: 16px; /* 16px stops iOS zooming on focus */
+    background-color: var(--bg-parchment); outline: none;
+    transition: border-color .2s ease, background-color .2s ease;
   }
-  h2 { font-weight: 650; font-size: 22px; line-height: 1.2; margin: 0 0 4px; font-variation-settings: "wdth" 90; }
-  .lede { color: var(--dust); margin: 0 0 24px; max-width: 36ch; }
-  .btn {
-    display: flex; align-items: center; justify-content: center; gap: 8px;
-    width: 100%; min-height: 56px; padding: 14px 20px;
-    border-radius: var(--r-l); border: 0;
-    font-weight: 650; font-size: 18px;
-    background: var(--kalari); color: #fff;
-    transition: background .15s, transform .08s;
+  select {
+    appearance: none; -webkit-appearance: none; padding-right: 40px; cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%236B6563' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 15px center;
   }
-  .btn:active { transform: scale(.985); }
-  .btn:hover { background: var(--kalari-d); }
-  .btn.quiet { background: transparent; color: var(--kalari); box-shadow: inset 0 0 0 2px var(--kalari); }
-  .btn.quiet:hover { background: rgba(122,46,18,.06); }
-  .btn[disabled] { opacity: .6; pointer-events: none; }
-  .link { background: none; border: 0; padding: 6px 0; color: var(--kalari); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
-  .back { background: none; border: 0; padding: 8px 0; margin: 6px 0 0; color: var(--dust); font-weight: 500; }
-  .back::before { content: "‹ "; font-size: 1.2em; }
+  select:disabled { cursor: not-allowed; color: var(--text-muted); }
+  input:focus, select:focus { border-color: var(--kalari-gold); background-color: #fff; }
+  [aria-invalid="true"] { border-color: var(--kalari-red) !important; }
+  .hint { font-size: 12.5px; color: var(--text-muted); margin: 6px 0 0; line-height: 1.45; }
 
-  /* ---------- welcome ---------- */
-  .poothara { display: block; width: 132px; height: auto; margin: 36px 0 8px; }
-  .welcome h1 { font-size: clamp(48px, 15vw, 72px); }
-  .welcome .actions { display: grid; gap: 12px; margin-top: 36px; }
-  .welcome .hint { color: var(--dust); font-size: 14px; margin-top: 18px; }
+  /* class checkboxes on the register form */
+  .checks { display: grid; gap: 8px; }
+  .check {
+    display: flex; align-items: center; gap: 12px; padding: 11px 14px; cursor: pointer;
+    border: 1.5px solid var(--border-color); border-radius: 8px; background: var(--bg-parchment);
+    font-size: 14.5px; font-weight: 500; margin: 0; transition: border-color .2s, background-color .2s;
+  }
+  .check input { width: 18px; height: 18px; margin: 0; accent-color: var(--kalari-red); flex: none; }
+  .check small { display: block; color: var(--text-muted); font-size: 12.5px; font-weight: 400; }
+  .check:has(input:checked) { border-color: var(--kalari-red); background: #fff; }
 
-  /* ---------- forms ---------- */
-  .field { margin: 0 0 18px; }
-  .field label, fieldset legend { display: block; font-weight: 600; font-size: 15px; margin: 0 0 6px; }
-  .field .opt { color: var(--dust); font-weight: 400; }
-  .field input {
-    width: 100%; min-height: 52px; padding: 12px 14px;
-    background: var(--paper); border: 1.5px solid var(--line); border-radius: var(--r-s);
-    font-size: 18px; outline: none;
+  /* ---- buttons ---- */
+  .submit-btn {
+    width: 100%; min-height: 50px; padding: 14px; margin-top: 8px; cursor: pointer;
+    background: var(--kalari-red); color: #fff; border: 0; border-radius: 8px;
+    font-size: 16px; font-weight: 600; box-shadow: 0 4px 12px rgba(160,64,44,.2);
+    transition: background .2s ease;
   }
-  .field input:focus { border-color: var(--kalari); box-shadow: 0 0 0 3px rgba(122,46,18,.12); }
-  .field input[aria-invalid="true"] { border-color: var(--err); }
-  .field .err { color: var(--err); font-size: 14px; margin-top: 4px; }
-  fieldset { border: 0; padding: 0; margin: 4px 0 22px; }
-  .choice {
-    display: flex; align-items: center; gap: 12px;
-    padding: 12px 14px; margin-bottom: 8px; min-height: 56px;
-    background: var(--paper); border: 1.5px solid var(--line); border-radius: var(--r-s);
+  .submit-btn:hover { background: var(--kalari-red-hover); }
+  .submit-btn:disabled { background: #D5CDC4; box-shadow: none; cursor: not-allowed; }
+  .text-btn {
+    background: none; border: 0; padding: 4px 2px; cursor: pointer;
+    color: var(--kalari-red); font-weight: 600; font-size: 14px;
+    text-decoration: underline; text-decoration-color: rgba(160,64,44,.35); text-underline-offset: 3px;
   }
-  .choice input { width: 22px; height: 22px; accent-color: var(--kalari); flex: none; margin: 0; }
-  .choice span { display: block; line-height: 1.25; }
-  .choice small { display: block; color: var(--dust); font-size: 14px; }
-  .choice:has(input:checked) { border-color: var(--kalari); background: #fff; }
-  .form-err { color: var(--err); margin: -6px 0 14px; }
+  .text-btn:hover { text-decoration-color: currentColor; }
+  .back-row { margin: -8px 0 18px; }
 
-  /* ---------- registered ---------- */
-  .issued {
-    margin: 28px 0; padding: 24px 22px;
-    background: var(--kalari); color: #fff; border-radius: var(--r-l);
-  }
-  .issued p { margin: 0; opacity: .85; }
+  /* ---- messages ---- */
+  .message { margin-top: 20px; padding: 12px 14px; border-radius: 8px; font-size: 14px; font-weight: 500; line-height: 1.45; }
+  .message.success { background: var(--ok-bg); color: var(--ok-ink); border: 1px solid var(--ok-line); }
+  .message.error { background: var(--err-bg); color: var(--kalari-red); border: 1px solid var(--err-line); }
+  .message.info { background: var(--bg-parchment); color: var(--text-muted); border: 1px solid var(--border-color); }
+  .message strong { font-weight: 700; }
+
+  /* ---- registered ---- */
+  .issued { text-align: center; padding: 6px 0 4px; }
+  .issued .label { font-size: 13px; font-weight: 600; color: var(--text-muted); margin: 0; }
   .issued .sid {
-    font-weight: 750; font-variation-settings: "wdth" 80; font-size: 64px; line-height: 1;
-    font-variant-numeric: tabular-nums; margin: 8px 0 6px; color: var(--brass-l);
+    font-family: 'Cinzel', Georgia, serif; font-weight: 700; font-size: 44px; letter-spacing: 2px;
+    color: var(--kalari-red); margin: 6px 0 10px; font-variant-numeric: tabular-nums;
   }
+  .issued .note { font-size: 14px; color: var(--text-muted); margin: 0 auto 18px; max-width: 30ch; line-height: 1.5; }
+  .issued .name { font-weight: 600; margin: 0 0 14px; }
 
-  /* ---------- find me ---------- */
-  .search {
-    width: 100%; min-height: 56px; padding: 12px 16px; margin: 0 0 12px;
-    background: var(--paper); border: 1.5px solid var(--line); border-radius: var(--r-l);
-    font-size: 20px; outline: none;
-  }
-  .search:focus { border-color: var(--kalari); }
-  .people { list-style: none; padding: 0; margin: 0; }
-  .people button {
-    display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
-    width: 100%; min-height: 56px; padding: 14px 4px; text-align: left;
-    background: none; border: 0; border-bottom: 1px solid var(--line); font-size: 19px;
-  }
-  .people .sidc { color: var(--dust); font-size: 14px; font-variant-numeric: tabular-nums; }
-  .empty { color: var(--dust); padding: 18px 0; }
+  /* ---- under the card ---- */
+  .below { width: 100%; max-width: 420px; text-align: center; margin-top: 18px; font-size: 14px; color: var(--text-muted); }
+  #sync { display: block; margin-top: 10px; font-size: 12.5px; color: var(--text-muted); min-height: 1em; }
+  #sync.pending { color: var(--kalari-gold); }
 
-  /* ---------- home ---------- */
-  .me { margin: 10px 0 26px; }
-  .me h1 { margin-bottom: 4px; overflow-wrap: anywhere; }
-  .me .meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; color: var(--dust); font-size: 15px; }
-  .me .meta b { color: var(--kalari); font-weight: 650; font-variant-numeric: tabular-nums; }
-  .day { font-weight: 600; font-size: 15px; color: var(--dust); margin: 0 0 10px; }
-
-  .classes { display: grid; gap: 12px; }
-  .cls {
-    display: grid; grid-template-columns: 52px 1fr; gap: 4px 14px; align-items: center;
-    padding: 16px 16px 16px 12px; border-radius: var(--r-l);
-    background: var(--paper); border: 1.5px solid var(--line);
-    transition: background .4s, border-color .4s;
-  }
-  .cls .lamp { grid-row: 1 / span 2; width: 52px; height: 72px; }
-  .cls h2 { font-size: 20px; }
-  .cls .when { color: var(--dust); font-size: 14px; margin: 0; }
-  .cls .act { grid-column: 1 / -1; margin-top: 10px; }
-  .cls .done-note { display: none; grid-column: 1 / -1; margin: 8px 0 0; color: var(--leaf); font-weight: 650; }
-  .cls.lit { background: var(--leaf-bg); border-color: #c8d9c1; }
-  .cls.lit .act { display: none; }
-  .cls.lit .done-note { display: block; }
-
-  /* lamp: the one animated moment */
-  .lamp .flame, .lamp .glow { transform-box: fill-box; transform-origin: 50% 100%; transform: scale(0); opacity: 0; }
-  .lit .lamp .flame { transform: scale(1); opacity: 1; transition: transform .55s cubic-bezier(.2,1.6,.4,1), opacity .2s; }
-  .lit .lamp .glow  { transform-origin: 50% 50%; transform: scale(1); opacity: .55; transition: transform .8s ease-out .1s, opacity .8s ease-out .1s; }
-  .lamp .metal { fill: none; stroke: var(--brass); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-  .lit .lamp .metal { fill: rgba(233,196,106,.25); }
-
-  .footer-note { color: var(--dust); font-size: 14px; margin-top: 28px; }
-
-  /* ---------- toast ---------- */
-  #toast {
-    position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom));
-    transform: translate(-50%, calc(100% + 60px)); visibility: hidden; max-width: calc(100vw - 32px);
-    background: var(--soot); color: #fff; padding: 14px 20px; border-radius: var(--r-l);
-    font-size: 16px; transition: transform .25s, visibility .25s; z-index: 5; text-align: center;
-  }
-  #toast.show { transform: translate(-50%, 0); visibility: visible; }
-  #toast.err { background: var(--err); }
-
-  @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after { transition: none !important; animation: none !important; }
-  }
+  @media (max-width: 360px) { .container { padding: 26px 18px 22px; } }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
 
-<div class="top">
-  <span class="wordmark">Kalarigram</span>
-  <span id="status" role="status" aria-live="polite"></span>
+<div class="container">
+  <div class="brand-header">
+    <img src="https://static.wixstatic.com/media/664a97_0bcab977d50d47f494807c03716ff3e2~mv2.png" alt="Kalarigram" class="brand-logo">
+    <p class="subtitle" id="subtitle">Gurukulam Check-In</p>
+  </div>
+  <div class="divider"></div>
+
+  <!-- ===== Check in ===== -->
+  <form id="checkInForm" novalidate>
+    <div class="form-group">
+      <label for="classSelect">Select Class</label>
+      <select id="classSelect"><option value="">Loading classes…</option></select>
+    </div>
+
+    <div class="btn-toggle-group" role="group" aria-label="Check-in type">
+      <button type="button" class="btn-toggle" id="btnReg" aria-pressed="true">Regular</button>
+      <button type="button" class="btn-toggle" id="btnDrop" aria-pressed="false">Drop-in</button>
+    </div>
+
+    <div id="regularFields">
+      <div class="form-group">
+        <label for="studentSelect">Select Your Name</label>
+        <select id="studentSelect"><option value="">Select a class first</option></select>
+        <p class="hint" id="studentHint" hidden></p>
+      </div>
+    </div>
+
+    <div id="dropInFields" hidden>
+      <div class="form-group">
+        <label for="dName">Full Name</label>
+        <input type="text" id="dName" placeholder="Enter your full name" autocomplete="name" autocapitalize="words">
+      </div>
+      <div class="form-group">
+        <label for="dPhone">Phone Number</label>
+        <input type="tel" id="dPhone" placeholder="Enter phone number" inputmode="tel" autocomplete="tel">
+      </div>
+    </div>
+
+    <button type="submit" class="submit-btn" id="checkInBtn">Check In</button>
+    <div class="message" id="checkInMsg" role="status" aria-live="polite" hidden></div>
+  </form>
+
+  <!-- ===== Register ===== -->
+  <form id="regForm" novalidate hidden>
+    <div class="back-row"><button type="button" class="text-btn" data-go="checkin">Back to check-in</button></div>
+    <div class="form-group">
+      <label for="rName">Full Name</label>
+      <input type="text" id="rName" placeholder="Enter your full name" autocomplete="name" autocapitalize="words">
+    </div>
+    <div class="form-group">
+      <label for="rPhone">Phone Number</label>
+      <input type="tel" id="rPhone" placeholder="10-digit mobile number" inputmode="tel" autocomplete="tel">
+    </div>
+    <div class="form-group">
+      <label for="rEmail">Email <span class="opt">(optional)</span></label>
+      <input type="email" id="rEmail" placeholder="you@example.com" inputmode="email" autocomplete="email">
+    </div>
+    <div class="form-group">
+      <label for="rEmergency">Emergency Contact</label>
+      <input type="text" id="rEmergency" placeholder="Name and phone number" autocomplete="off">
+    </div>
+    <div class="form-group">
+      <span class="legend" id="rClassesLabel">Your Classes</span>
+      <div class="checks" id="rClasses" role="group" aria-labelledby="rClassesLabel"></div>
+    </div>
+    <button type="submit" class="submit-btn" id="regBtn">Register</button>
+    <div class="message" id="regMsg" role="status" aria-live="polite" hidden></div>
+  </form>
+
+  <!-- ===== Registered ===== -->
+  <div id="issued" class="issued" hidden>
+    <p class="name" id="iName"></p>
+    <p class="label">Your Student ID</p>
+    <div class="sid" id="iSid"></div>
+    <p class="note" id="iNote"></p>
+    <button type="button" class="submit-btn" data-go="checkin">Continue to check-in</button>
+  </div>
 </div>
 
-<main>
-  <!-- Welcome: no student remembered on this phone -->
-  <section id="vWelcome" class="welcome" hidden>
-    <svg class="poothara" viewBox="0 0 132 108" aria-hidden="true">
-      <g fill="none" stroke="#b8862b" stroke-width="2" stroke-linejoin="round">
-        <path d="M66 6c4 6 5 9 0 14c-5-5-4-8 0-14z" fill="#e9c46a"/>
-        <rect x="56" y="24" width="20" height="10"/>
-        <rect x="50" y="34" width="32" height="10"/>
-        <rect x="44" y="44" width="44" height="10"/>
-        <rect x="38" y="54" width="56" height="10"/>
-        <rect x="32" y="64" width="68" height="10"/>
-        <rect x="26" y="74" width="80" height="10"/>
-        <rect x="20" y="84" width="92" height="10"/>
-      </g>
-      <line x1="4" y1="100" x2="128" y2="100" stroke="#7a2e12" stroke-width="2"/>
-    </svg>
-    <h1>Attendance</h1>
-    <p class="lede">Mark yourself present for class from your own phone.</p>
-    <div class="actions">
-      <button class="btn" id="goRegister">Register as a new student</button>
-      <button class="btn quiet" id="goFind">I've registered before</button>
-    </div>
-    <p class="hint">This phone will remember you, so you only do this once.</p>
-  </section>
-
-  <!-- Register -->
-  <section id="vRegister" hidden>
-    <button class="back" data-back>Back</button>
-    <h1>Register</h1>
-    <p class="lede">You'll get a Student ID straight away.</p>
-    <form id="regForm" novalidate>
-      <div class="field">
-        <label for="rName">Full name</label>
-        <input id="rName" name="name" autocomplete="name" autocapitalize="words" required>
-      </div>
-      <div class="field">
-        <label for="rPhone">Phone</label>
-        <input id="rPhone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="98765 43210" required>
-      </div>
-      <div class="field">
-        <label for="rEmail">Email <span class="opt">(optional)</span></label>
-        <input id="rEmail" name="email" type="email" inputmode="email" autocomplete="email">
-      </div>
-      <div class="field">
-        <label for="rEmergency">Emergency contact</label>
-        <input id="rEmergency" name="emergency" autocomplete="off" placeholder="Name and phone number" required>
-      </div>
-      <fieldset>
-        <legend>Your classes</legend>
-        <div id="rClasses"></div>
-      </fieldset>
-      <p class="form-err" id="regErr" hidden></p>
-      <button class="btn" id="regSubmit" type="submit">Register</button>
-    </form>
-  </section>
-
-  <!-- Registered: show the issued ID -->
-  <section id="vIssued" hidden>
-    <h1 id="iTitle">You're registered</h1>
-    <div class="issued">
-      <p>Your Student ID</p>
-      <div class="sid" id="iSid"></div>
-      <p id="iNote">Keep it handy. The office may ask for it.</p>
-    </div>
-    <button class="btn" id="iContinue">Go to my classes</button>
-  </section>
-
-  <!-- Find me -->
-  <section id="vFind" hidden>
-    <button class="back" data-back>Back</button>
-    <h1>Find your name</h1>
-    <p class="lede">Type your name or Student ID, then tap yourself.</p>
-    <input class="search" id="fSearch" type="search" placeholder="Your name or KG-…" autocomplete="off" autocorrect="off" spellcheck="false">
-    <ul class="people" id="fList"></ul>
-  </section>
-
-  <!-- Home: my classes -->
-  <section id="vHome" hidden>
-    <div class="me">
-      <h1 id="hName"></h1>
-      <div class="meta"><span>Student ID <b id="hSid"></b></span><button class="link" id="hSwitch">Not you? Switch</button></div>
-    </div>
-    <p class="day" id="hDay"></p>
-    <div class="classes" id="hClasses"></div>
-    <p class="footer-note" id="hNote">Joined a new class? Ask at the office to add it.</p>
-  </section>
-</main>
-
-<div id="toast" role="status" aria-live="polite"></div>
-
-<template id="tLamp">
-  <svg class="lamp" viewBox="0 0 52 72" aria-hidden="true">
-    <circle class="glow" cx="26" cy="14" r="14" fill="#e9c46a"/>
-    <path class="flame" d="M26 3c5 7 6 11 0 17c-6-6-5-10 0-17z" fill="#f2a93b"/>
-    <g class="metal">
-      <path d="M15 22h22l-4 6H19z"/>
-      <path d="M24 28h4v26h-4z"/>
-      <circle cx="26" cy="38" r="3.5"/>
-      <path d="M17 60l5-6h8l5 6z"/>
-      <path d="M11 60h30v5H11z"/>
-    </g>
-  </svg>
-</template>
+<div class="below">
+  <span id="belowCheckin">New student? <button type="button" class="text-btn" data-go="register">Register here</button></span>
+  <span id="sync" role="status" aria-live="polite"></span>
+</div>
 
 <script>
 /* ===== config ===== */
@@ -302,79 +231,99 @@ const FLUSH_MS = 15 * 1000;        // retry queue every 15 s
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
-  del(k) { try { localStorage.removeItem(k); } catch {} },
 };
 
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const today = () => new Date().toLocaleDateString('en-CA'); // yyyy-mm-dd, device local time
 const uuid = () => crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2);
+const firstName = n => String(n).trim().split(/\s+/)[0];
 
 let data = LS.get('kg_data', null);  // { classes:[{id,name,location,schedule,type}], students:{classId:[{id,name}]} }
-let me = LS.get('kg_me', null);      // { id, name, classIds? }
+let me = LS.get('kg_me', null);      // last student checked in / registered on this phone: { id, name, classIds? }
 let pin = LS.get('kg_pin', '');      // only used if the API ever requires one
+let mode = 'Regular';
 let flushing = false;
-let viewStack = [];                  // view stack for Back
 
-/* marked-today set (per device), resets daily */
+/* checked-in-today set (per device), resets daily; keys 'classId|studentId' or 'classId|dropin:phone' */
 function marked() {
   const m = LS.get('kg_marked', { date: today(), keys: [] });
   return m.date === today() ? m : { date: today(), keys: [] };
 }
-function isMarked(cid, sid) { return marked().keys.includes(cid + '|' + sid); }
-function addMarked(cid, sid) { const m = marked(); m.keys.push(cid + '|' + sid); LS.set('kg_marked', m); }
+function isMarked(key) { return marked().keys.includes(key); }
+function addMarked(key) { const m = marked(); m.keys.push(key); LS.set('kg_marked', m); }
 
-/* ===== views ===== */
-const VIEWS = ['vWelcome', 'vRegister', 'vIssued', 'vFind', 'vHome'];
-function current() { return VIEWS.find(v => !$(v).hidden); }
-function show(view, { push = true } = {}) {
-  const from = current();
-  if (push && from && from !== view) viewStack.push(from);
-  VIEWS.forEach(v => $(v).hidden = v !== view);
+/* ===== screens inside the card ===== */
+function go(screen) {
+  $('checkInForm').hidden = screen !== 'checkin';
+  $('regForm').hidden = screen !== 'register';
+  $('issued').hidden = screen !== 'issued';
+  $('belowCheckin').hidden = screen !== 'checkin';
+  $('subtitle').textContent = screen === 'checkin' ? 'Gurukulam Check-In' : 'Student Registration';
+  if (screen === 'register') { renderClassChecks(); $('regMsg').hidden = true; }
+  if (screen === 'checkin') { $('checkInMsg').hidden = true; renderCheckIn(); }
   window.scrollTo(0, 0);
-  render(view);
 }
-function back() { show(viewStack.pop() || (me ? 'vHome' : 'vWelcome'), { push: false }); }
-function render(view) {
-  if (view === 'vRegister') renderClassChoices();
-  if (view === 'vFind') renderPeople();
-  if (view === 'vHome') renderHome();
+document.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => go(b.dataset.go)));
+
+function say(box, kind, parts) {
+  // parts: string or array of strings / {b:text} for bold — built with textContent, never innerHTML
+  const m = $(box);
+  m.textContent = '';
+  [].concat(parts).forEach(p => m.append(typeof p === 'string' ? p : el('strong', null, p.b)));
+  m.className = 'message ' + kind;
+  m.hidden = false;
 }
 
-/* ===== data helpers ===== */
-function classesOf(sid) {
-  if (!data) return [];
-  const mine = data.classes.filter(c => (data.students[c.id] || []).some(s => s.id === sid));
-  if (mine.length) return mine;
+/* ===== check in ===== */
+function studentsIn(cid) {
+  const list = ((data && data.students[cid]) || []).slice();
   // just registered and the server list hasn't caught up yet
-  const ids = (me && me.id === sid && me.classIds) || [];
-  return data.classes.filter(c => ids.includes(c.id));
-}
-function allStudents() {
-  const seen = new Map();
-  if (data) Object.values(data.students).forEach(list => list.forEach(s => seen.set(s.id, s)));
-  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
-}
-function remember(student) {
-  me = { id: student.id, name: student.name, classIds: student.classIds };
-  LS.set('kg_me', me);
+  if (me && me.classIds && me.classIds.includes(cid) && !list.some(s => s.id === me.id)) list.push({ id: me.id, name: me.name });
+  return list.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/* ===== register ===== */
-function renderClassChoices() {
-  const box = $('rClasses');
-  const checked = new Set([...box.querySelectorAll('input:checked')].map(i => i.value));
-  box.textContent = '';
-  if (!data || !data.classes.length) { box.append(el('p', 'empty', 'Loading classes…')); return; }
-  data.classes.forEach(c => {
-    const lab = el('label', 'choice');
-    const cb = el('input'); cb.type = 'checkbox'; cb.name = 'classIds'; cb.value = c.id; cb.checked = checked.has(c.id);
-    const txt = el('span', null, c.name);
-    const sub = [c.schedule, c.location].filter(Boolean).join(', ');
-    if (sub) txt.append(el('small', null, sub));
-    lab.append(cb, txt);
-    box.append(lab);
-  });
+function renderCheckIn() {
+  const cs = $('classSelect');
+  const keep = cs.value || LS.get('kg_lastClass', '');
+  cs.textContent = '';
+  if (!data) { cs.append(new Option('Loading classes…', '')); renderStudents(); return; }
+  if (!data.classes.length) { cs.append(new Option('No active classes right now', '')); renderStudents(); return; }
+  cs.append(new Option('-- Select Class --', ''));
+  data.classes.forEach(c => cs.append(new Option(c.name, c.id)));
+  cs.value = data.classes.some(c => c.id === keep) ? keep : '';
+  renderStudents();
+}
+
+function renderStudents() {
+  const ss = $('studentSelect'), hint = $('studentHint');
+  const cid = $('classSelect').value;
+  const keep = ss.value || (me && me.id) || '';
+  ss.textContent = '';
+  hint.hidden = true;
+  if (!cid) { ss.append(new Option('Select a class first', '')); ss.disabled = true; return; }
+  const list = studentsIn(cid);
+  ss.disabled = !list.length;
+  if (!list.length) {
+    ss.append(new Option('No students in this class yet', ''));
+    hint.textContent = 'Not enrolled yet? Register below, or check in as a Drop-in.';
+    hint.hidden = false;
+    return;
+  }
+  ss.append(new Option('-- Select your name --', ''));
+  list.forEach(s => ss.append(new Option(s.name, s.id)));
+  ss.value = list.some(s => s.id === keep) ? keep : '';
+  hint.textContent = "Can't find your name? Ask at the office to add you to this class.";
+  hint.hidden = false;
+}
+
+function setMode(m) {
+  mode = m;
+  $('btnReg').setAttribute('aria-pressed', m === 'Regular');
+  $('btnDrop').setAttribute('aria-pressed', m === 'Drop-in');
+  $('regularFields').hidden = m !== 'Regular';
+  $('dropInFields').hidden = m !== 'Drop-in';
+  $('checkInMsg').hidden = true;
 }
 
 function normPhone(v) {
@@ -384,40 +333,92 @@ function normPhone(v) {
   return d;
 }
 
-function fieldError(input, msg) {
-  const wrap = input.closest('.field');
-  let e = wrap.querySelector('.err');
-  if (!msg) { input.removeAttribute('aria-invalid'); if (e) e.remove(); return false; }
-  input.setAttribute('aria-invalid', 'true');
-  if (!e) { e = el('div', 'err'); e.id = input.id + 'Err'; wrap.append(e); input.setAttribute('aria-describedby', e.id); }
-  e.textContent = msg;
-  return true;
+function invalid(input, bad) { bad ? input.setAttribute('aria-invalid', 'true') : input.removeAttribute('aria-invalid'); return bad; }
+
+function enqueue(key, rec) { const q = LS.get(key, []); q.push(rec); LS.set(key, q); }
+
+function submitCheckIn(e) {
+  e.preventDefault();
+  const cs = $('classSelect');
+  const cls = data && data.classes.find(c => c.id === cs.value);
+  if (invalid(cs, !cls)) { say('checkInMsg', 'error', 'Please select a class.'); cs.focus(); return; }
+  LS.set('kg_lastClass', cls.id);
+  const ts = new Date().toISOString();
+
+  if (mode === 'Regular') {
+    const ss = $('studentSelect');
+    const s = studentsIn(cls.id).find(x => x.id === ss.value);
+    if (invalid(ss, !s)) { say('checkInMsg', 'error', 'Please select your name.'); if (!ss.disabled) ss.focus(); return; }
+    if (isMarked(cls.id + '|' + s.id)) {
+      say('checkInMsg', 'info', [{ b: s.name }, ' is already checked in for ', { b: cls.name }, ' today.']);
+      return;
+    }
+    enqueue('kg_queue', { entryId: uuid(), classId: cls.id, studentId: s.id, ts });
+    addMarked(cls.id + '|' + s.id);
+    me = { id: s.id, name: s.name, classIds: me && me.id === s.id ? me.classIds : undefined };
+    LS.set('kg_me', me);
+    say('checkInMsg', 'success', ['Welcome, ', { b: firstName(s.name) }, '. You are checked in for ', { b: cls.name }, '.']);
+  } else {
+    const n = $('dName'), p = $('dPhone');
+    const name = n.value.trim(), phone = normPhone(p.value);
+    const badName = invalid(n, name.length < 2), badPhone = invalid(p, phone.length !== 10);
+    if (badName || badPhone) {
+      say('checkInMsg', 'error', badName ? 'Please enter your full name.' : 'Please enter a 10-digit phone number.');
+      (badName ? n : p).focus();
+      return;
+    }
+    if (isMarked(cls.id + '|dropin:' + phone)) {
+      say('checkInMsg', 'info', [{ b: name }, ' is already checked in for ', { b: cls.name }, ' today.']);
+      return;
+    }
+    enqueue('kg_dropins', { entryId: uuid(), classId: cls.id, name, phone, ts });
+    addMarked(cls.id + '|dropin:' + phone);
+    n.value = ''; p.value = '';
+    say('checkInMsg', 'success', ['Welcome, ', { b: firstName(name) }, '. You are checked in for ', { b: cls.name }, ' as a drop-in.']);
+  }
+  flush();
 }
 
-function validate() {
-  const f = $('regForm');
-  const name = f.name.value.trim(), phone = normPhone(f.phone.value), email = f.email.value.trim(), emergency = f.emergency.value.trim();
-  const classIds = [...f.querySelectorAll('input[name=classIds]:checked')].map(i => i.value);
-  let bad = [
-    fieldError(f.name, name.length < 2 ? 'Enter your full name.' : ''),
-    fieldError(f.phone, phone.length !== 10 ? 'Enter a 10-digit mobile number.' : ''),
-    fieldError(f.email, email && !/^\S+@\S+\.\S+$/.test(email) ? 'Check the email address, or leave it empty.' : ''),
-    fieldError(f.emergency, emergency.length < 3 ? 'Add someone we can call in an emergency.' : ''),
-  ];
-  const err = $('regErr');
-  if (!classIds.length) { err.textContent = 'Choose at least one class.'; err.hidden = false; bad.push(true); }
-  else err.hidden = true;
-  const first = f.querySelector('[aria-invalid="true"]');
-  if (first) first.focus();
-  return bad.some(Boolean) ? null : { name, phone, email, emergency, classIds };
+/* ===== register ===== */
+function renderClassChecks() {
+  const box = $('rClasses');
+  const checked = new Set([...box.querySelectorAll('input:checked')].map(i => i.value));
+  box.textContent = '';
+  if (!data || !data.classes.length) { box.append(el('p', 'hint', 'Loading classes…')); return; }
+  data.classes.forEach(c => {
+    const lab = el('label', 'check');
+    const cb = el('input'); cb.type = 'checkbox'; cb.value = c.id; cb.checked = checked.has(c.id);
+    const txt = el('span', null, c.name);
+    const sub = [c.schedule, c.location].filter(Boolean).join(', ');
+    if (sub) txt.append(el('small', null, sub));
+    lab.append(cb, txt);
+    box.append(lab);
+  });
 }
 
 async function submitRegister(e) {
   e.preventDefault();
-  const body = validate();
-  if (!body) return;
-  const btn = $('regSubmit');
+  const f = { name: $('rName'), phone: $('rPhone'), email: $('rEmail'), emergency: $('rEmergency') };
+  const body = {
+    name: f.name.value.trim(), phone: normPhone(f.phone.value), email: f.email.value.trim(), emergency: f.emergency.value.trim(),
+    classIds: [...$('rClasses').querySelectorAll('input:checked')].map(i => i.value),
+  };
+  const problems = [
+    invalid(f.name, body.name.length < 2) && 'your full name',
+    invalid(f.phone, body.phone.length !== 10) && 'a 10-digit phone number',
+    invalid(f.email, !!body.email && !/^\S+@\S+\.\S+$/.test(body.email)) && 'a valid email (or leave it empty)',
+    invalid(f.emergency, body.emergency.length < 3) && 'an emergency contact',
+    !body.classIds.length && 'at least one class',
+  ].filter(Boolean);
+  if (problems.length) {
+    say('regMsg', 'error', 'Please add ' + problems.join(', ').replace(/, ([^,]*)$/, ' and $1') + '.');
+    const first = document.querySelector('#regForm [aria-invalid="true"]');
+    if (first) first.focus();
+    return;
+  }
+  const btn = $('regBtn');
   btn.disabled = true; btn.textContent = 'Registering…';
+  $('regMsg').hidden = true;
   try {
     const res = await fetch(API_URL, {
       method: 'POST',
@@ -426,113 +427,66 @@ async function submitRegister(e) {
     });
     const out = await res.json();
     if (!out.ok) throw new Error(out.error || 'failed');
-    const student = { id: out.id, name: out.name || body.name, classIds: out.existing ? undefined : body.classIds };
+    const name = out.name || body.name;
     if (!out.existing && data) {
       // show the new student straight away; the background refresh confirms it
-      body.classIds.forEach(cid => { (data.students[cid] = data.students[cid] || []).push({ id: out.id, name: body.name }); });
+      body.classIds.forEach(cid => { if (data.students[cid]) data.students[cid].push({ id: out.id, name }); });
       LS.set('kg_data', data);
     }
-    remember(student);
+    me = { id: out.id, name, classIds: out.existing ? undefined : body.classIds };
+    LS.set('kg_me', me);
+    if (!out.existing) LS.set('kg_lastClass', body.classIds[0]);
     $('regForm').reset();
-    $('iTitle').textContent = out.existing ? 'You were already registered' : "You're registered";
-    $('iNote').textContent = out.existing
-      ? `This phone number belongs to ${student.name}. Your classes stay as they are. Ask at the office to change them.`
-      : 'Keep it handy. The office may ask for it.';
+    $('classSelect').value = ''; $('studentSelect').value = ''; // next check-in screen picks the new student + class
+    $('iName').textContent = out.existing ? `${name}, you're already registered.` : `Welcome to Kalarigram, ${firstName(name)}.`;
     $('iSid').textContent = out.id;
-    viewStack = [];
-    show('vIssued', { push: false });
+    $('iNote').textContent = out.existing
+      ? 'This phone number is already on our register. To change your classes, please ask at the office.'
+      : 'Please note your Student ID. You can now check in for your classes.';
+    go('issued');
     load();
   } catch (err) {
-    const msg = !navigator.onLine ? "You're offline. Connect to the internet and tap Register again."
-      : err.message === 'bad pin' ? 'Registration is locked right now. Ask at the office.'
-      : "Couldn't register. Check your connection and tap Register again.";
-    $('regErr').textContent = msg; $('regErr').hidden = false;
+    say('regMsg', 'error', !navigator.onLine ? "You're offline. Connect to the internet and tap Register again."
+      : err.message === 'bad pin' ? 'Registration is closed right now. Please ask at the office.'
+      : "Couldn't register. Check your connection and tap Register again.");
   }
   btn.disabled = false; btn.textContent = 'Register';
 }
 
-/* ===== find me ===== */
-function renderPeople() {
-  const ul = $('fList');
-  ul.textContent = '';
-  if (!data) { ul.append(el('p', 'empty', 'Loading students…')); return; }
-  const all = allStudents();
-  const q = $('fSearch').value.trim().toLowerCase();
-  if (!q) { ul.append(el('p', 'empty', 'Start typing to find yourself.')); return; }
-  const hits = all.filter(s => s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q));
-  if (!hits.length) {
-    const p = el('p', 'empty', 'No one by that name yet. ');
-    const b = el('button', 'link', 'Register as a new student');
-    b.onclick = () => show('vRegister');
-    p.append(b); ul.append(p);
-    return;
-  }
-  hits.slice(0, 30).forEach(s => {
-    const li = el('li'), b = el('button');
-    b.append(el('span', null, s.name), el('span', 'sidc', s.id));
-    b.onclick = () => { remember(s); viewStack = []; show('vHome', { push: false }); toast(`Welcome, ${s.name.split(' ')[0]}`); };
-    li.append(b); ul.append(li);
+/* ===== sync: optimistic + queued ===== */
+async function send(action, key) {
+  const batch = LS.get(key, []).slice(0, 50);
+  if (!batch.length) return;
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action, pin, records: batch }),
   });
+  const out = await res.json();
+  if (out.ok) {
+    const done = new Set(out.saved);
+    LS.set(key, LS.get(key, []).filter(r => !done.has(r.entryId)));
+  }
 }
 
-/* ===== home ===== */
-function renderHome() {
-  if (!me) return show('vWelcome', { push: false });
-  $('hName').textContent = me.name;
-  $('hSid').textContent = me.id;
-  $('hDay').textContent = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' });
-  const box = $('hClasses');
-  box.textContent = '';
-  const list = classesOf(me.id);
-  if (!data) { box.append(el('p', 'empty', 'Loading your classes…')); return; }
-  if (!list.length) { box.append(el('p', 'empty', "You're not in any active class right now. Ask at the office to add you.")); return; }
-  list.forEach(c => box.append(classCard(c)));
-}
-
-function classCard(c) {
-  const card = el('article', 'cls' + (isMarked(c.id, me.id) ? ' lit' : ''));
-  card.append($('tLamp').content.cloneNode(true));
-  card.append(el('h2', null, c.name));
-  card.append(el('p', 'when', [c.schedule, c.location].filter(Boolean).join(', ') || ' '));
-  const btn = el('button', 'btn act', 'Mark present');
-  btn.setAttribute('aria-label', `Mark present for ${c.name}`);
-  btn.onclick = () => markPresent(c, card);
-  card.append(btn, el('p', 'done-note', 'Present today'));
-  return card;
-}
-
-/* ===== marking: optimistic + queued ===== */
-function markPresent(c, card) {
-  if (isMarked(c.id, me.id)) return;
-  const q = LS.get('kg_queue', []);
-  q.push({ entryId: uuid(), classId: c.id, studentId: me.id, ts: new Date().toISOString() });
-  LS.set('kg_queue', q);
-  addMarked(c.id, me.id);
-  card.classList.add('lit');
-  toast(`Marked present for ${c.name}`);
-  flush();
-}
+function pending() { return LS.get('kg_queue', []).length + LS.get('kg_dropins', []).length; }
 
 async function flush() {
-  if (flushing || !navigator.onLine) return updateStatus();
-  const batch = LS.get('kg_queue', []).slice(0, 50);
-  if (!batch.length) return updateStatus();
-  flushing = true; updateStatus();
-  try {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'attendance', pin, records: batch }),
-    });
-    const out = await res.json();
-    if (out.ok) {
-      const done = new Set(out.saved);
-      LS.set('kg_queue', LS.get('kg_queue', []).filter(r => !done.has(r.entryId)));
-    }
-  } catch (e) { /* offline or slow — stays queued */ }
+  if (flushing || !navigator.onLine || !pending()) return updateSync();
+  flushing = true; updateSync();
+  try { await send('attendance', 'kg_queue'); await send('dropin', 'kg_dropins'); }
+  catch (e) { /* offline or slow — stays queued */ }
   flushing = false;
-  updateStatus();
-  if (LS.get('kg_queue', []).length && navigator.onLine) setTimeout(flush, 3000);
+  updateSync();
+  if (pending() && navigator.onLine) setTimeout(flush, 3000);
+}
+
+function updateSync() {
+  const n = pending(), s = $('sync');
+  s.className = n ? 'pending' : '';
+  const what = n === 1 ? '1 check-in' : `${n} check-ins`;
+  s.textContent = !navigator.onLine ? (n ? `Offline. ${what} will be sent when you reconnect.` : 'Offline')
+    : n ? (flushing ? `Sending ${what}…` : `${what} waiting to send`) : '';
 }
 
 /* ===== data load ===== */
@@ -542,64 +496,40 @@ async function load() {
     const out = await res.json();
     if (out.ok) {
       data = { classes: out.classes, students: out.students };
-      // keep a just-registered student visible if the server cache is a step behind
-      if (me && me.classIds && !Object.values(data.students).some(l => l.some(s => s.id === me.id))) {
-        me.classIds.forEach(cid => { if (data.students[cid]) data.students[cid].push({ id: me.id, name: me.name }); });
-      } else if (me && me.classIds) {
+      LS.set('kg_data', data);
+      // server list now includes a just-registered student: drop the local fallback
+      if (me && me.classIds && Object.values(data.students).some(l => l.some(s => s.id === me.id))) {
         delete me.classIds; LS.set('kg_me', me);
       }
-      LS.set('kg_data', data);
-      const v = current();
-      if (v === 'vRegister' || v === 'vFind' || v === 'vHome') render(v);
+      if (!$('checkInForm').hidden) renderCheckIn();
+      if (!$('regForm').hidden) renderClassChecks();
+    } else if (!data) {
+      $('classSelect').replaceChildren(new Option('Error loading classes', ''));
     }
-  } catch (e) { /* keep using cached list */ }
-  updateStatus();
-}
-
-/* ===== misc UI ===== */
-let toastTimer;
-function toast(msg, kind = '') {
-  const t = $('toast');
-  t.textContent = msg;
-  t.className = 'show ' + kind;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.className = kind, 2200);
-}
-
-function updateStatus() {
-  const n = LS.get('kg_queue', []).length;
-  const s = $('status');
-  s.className = n ? 'pending' : '';
-  s.textContent = !navigator.onLine ? (n ? `Offline, ${n} waiting to send` : 'Offline')
-    : n ? (flushing ? 'Sending…' : `${n} waiting to send`) : '';
+  } catch (e) {
+    if (!data) $('classSelect').replaceChildren(new Option("Couldn't load classes. Check your connection.", ''));
+  }
+  updateSync();
 }
 
 /* ===== wiring ===== */
-$('goRegister').onclick = () => show('vRegister');
-$('goFind').onclick = () => { show('vFind'); $('fSearch').focus(); };
-document.querySelectorAll('[data-back]').forEach(b => b.onclick = back);
+$('btnReg').onclick = () => setMode('Regular');
+$('btnDrop').onclick = () => setMode('Drop-in');
+$('classSelect').addEventListener('change', () => { invalid($('classSelect'), false); $('checkInMsg').hidden = true; renderStudents(); });
+$('studentSelect').addEventListener('change', () => { invalid($('studentSelect'), false); $('checkInMsg').hidden = true; });
+['dName', 'dPhone', 'rName', 'rPhone', 'rEmail', 'rEmergency'].forEach(id => $(id).addEventListener('input', () => invalid($(id), false)));
+$('checkInForm').addEventListener('submit', submitCheckIn);
 $('regForm').addEventListener('submit', submitRegister);
-$('fSearch').addEventListener('input', renderPeople);
-$('iContinue').onclick = () => show('vHome', { push: false });
-$('hSwitch').onclick = () => {
-  if (LS.get('kg_queue', []).length) flush();
-  me = null; LS.del('kg_me'); viewStack = [];
-  show('vWelcome', { push: false });
-};
 
 window.addEventListener('online', () => { flush(); load(); });
-window.addEventListener('offline', updateStatus);
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) return;
-  flush();
-  if (current() === 'vHome') renderHome(); // date may have rolled over
-});
+window.addEventListener('offline', updateSync);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) flush(); });
 setInterval(flush, FLUSH_MS);
 setInterval(load, REFRESH_MS);
 
 /* ===== start ===== */
-show(me ? 'vHome' : 'vWelcome', { push: false });
-load(); flush(); updateStatus();
+go('checkin');
+load(); flush(); updateSync();
 </script>
 </body>
 </html>

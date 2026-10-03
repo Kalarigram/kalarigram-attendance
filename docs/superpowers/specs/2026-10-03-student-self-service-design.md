@@ -35,3 +35,6 @@ Visual direction: lime-plaster ground, kalari red `#7a2e12`, brass `#b8862b`, ba
 
 ## Testing
 Manual run in a local browser against the live API: first visit → register → mark present → reload → switch → find me → offline mark → reconnect. Test rows are listed for deletion afterwards. Backend changes are deployed by Madhan as a new version of the existing deployment (same URL).
+
+## Revision (same day): Gurukulam Check-In card
+After seeing Madhan's demo, the UI was rebuilt to match its look (logo, Cinzel/Plus Jakarta Sans, card, #A0402C/#C88D32). Flow: class dropdown → Regular/Drop-in → name dropdown (enrolled in that class) → Check In; last class + student remembered for one-tap repeat. Drop-ins (name + phone) post to new `dropin` action → Drop-ins tab. Registration is a link under the card.

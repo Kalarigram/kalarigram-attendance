@@ -17,6 +17,8 @@
  *        → one row per student + class + day; repeats are skipped but still reported as saved
  *   POST (text/plain JSON) {action:'register', pin, name, phone, email, emergency, classIds:[…]}
  *        → {ok, id, enrolled} or, if the phone is already registered, {ok, id, name, existing:true}
+ *   POST (text/plain JSON) {action:'dropin', pin, records:[{entryId,classId,name,phone,ts}]}
+ *        → unregistered visitors, written to the Drop-ins tab; one row per phone + class + day
  */
 
 const TZ = 'Asia/Kolkata';
@@ -29,6 +31,7 @@ const TABS = {
   Enrollments: ['Student ID', 'Class ID', 'Enrolled On'],
   Attendance:  ['Timestamp', 'Date', 'Class ID', 'Student ID', 'Entry ID'],
   Payments:    ['Student ID', 'Amount', 'Date', 'Mode', 'Receipt No', 'Notes'],
+  'Drop-ins':  ['Timestamp', 'Date', 'Class ID', 'Name', 'Phone', 'Entry ID'],
 };
 
 // Starter rows for Classes — edit locations/schedules/dates in the sheet afterwards.
@@ -63,6 +66,7 @@ function setup() {
   ss.getSheetByName('Students').getRange('C:C').setNumberFormat('@'); // phone as text
   ss.getSheetByName('Attendance').getRange('A:A').setNumberFormat('yyyy-mm-dd hh:mm:ss');
   ss.getSheetByName('Attendance').getRange('B:B').setNumberFormat('yyyy-mm-dd');
+  formatDropIns_(ss.getSheetByName('Drop-ins'));
   buildDashboard_(ss);
   clearCache();
 }
@@ -70,10 +74,11 @@ function setup() {
 function buildDashboard_(ss) {
   const sh = ss.getSheetByName('Dashboard') || ss.insertSheet('Dashboard');
   sh.clear();
-  sh.getRange('A1:A3').setValues([['Today'], ['Unique students today'], ['Class check-ins today']]);
+  sh.getRange('A1:A4').setValues([['Today'], ['Unique students today'], ['Class check-ins today'], ['Drop-ins today']]);
   sh.getRange('B1').setFormula('=TODAY()').setNumberFormat('dd mmm yyyy');
   sh.getRange('B2').setFormula('=COUNTUNIQUEIFS(Attendance!D2:D,Attendance!B2:B,B1)');
   sh.getRange('B3').setFormula('=IFERROR(ROWS(UNIQUE(FILTER(Attendance!C2:C&"|"&Attendance!D2:D,Attendance!B2:B=B1))),0)');
+  sh.getRange('B4').setFormula("=COUNTIFS('Drop-ins'!B2:B,B1)");
 
   sh.getRange('A5:C5').setValues([['Class ID', 'Class', 'Present today']]);
   sh.getRange('A6').setFormula('=FILTER(Classes!A2:B,Classes!H2:H=TRUE)');
@@ -84,7 +89,7 @@ function buildDashboard_(ss) {
   sh.getRange('F6').setFormula('=MAP(E6:E,LAMBDA(d,IF(d="","",COUNTUNIQUEIFS(Attendance!D2:D,Attendance!B2:B,d))))');
   sh.getRange('E6:E').setNumberFormat('dd mmm yyyy');
 
-  sh.getRange('A1:A3').setFontWeight('bold');
+  sh.getRange('A1:A4').setFontWeight('bold');
   sh.getRange('A5:F5').setFontWeight('bold');
   sh.setColumnWidth(1, 190);
   sh.setColumnWidth(2, 230);
@@ -116,6 +121,7 @@ function doPost(e) {
     checkPin_(body.pin);
     if (body.action === 'attendance') return json_(markAttendance_(body.records || []));
     if (body.action === 'register')   return json_(register_(body));
+    if (body.action === 'dropin')     return json_(markDropIns_(body.records || []));
     return json_({ ok: false, error: 'unknown action' });
   } catch (err) {
     return json_({ ok: false, error: String(err.message || err) });
@@ -157,6 +163,56 @@ function markAttendance_(records) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// Unregistered visitors. Same rules as attendance, keyed on phone instead of Student ID.
+// The tab is created on first use, so setup() doesn't need re-running.
+function markDropIns_(records) {
+  const valid = records.filter(r => r && r.entryId && r.classId && String(r.name || '').trim() && normPhone_(r.phone).length === 10);
+  if (!valid.length) return { ok: true, saved: records.filter(r => r && r.entryId).map(r => r.entryId) };
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const ss = SpreadsheetApp.getActive();
+    let sh = ss.getSheetByName('Drop-ins');
+    if (!sh) {
+      sh = ss.insertSheet('Drop-ins');
+      sh.appendRow(TABS['Drop-ins']);
+      sh.setFrozenRows(1);
+      sh.getRange(1, 1, 1, TABS['Drop-ins'].length).setFontWeight('bold');
+      formatDropIns_(sh);
+    }
+    const last = sh.getLastRow();
+    const start = Math.max(2, last - 999);
+    const recent = last >= 2 ? sh.getRange(start, 2, last - start + 1, 5).getValues() : []; // Date, Class, Name, Phone, Entry
+    const seen = new Set(recent.map(r => String(r[4])));
+    const seenDay = new Set(recent.map(r => dayKey_(r[0], r[1], normPhone_(r[3]))));
+
+    const rows = [];
+    valid.forEach(r => {
+      if (seen.has(String(r.entryId))) return;
+      seen.add(String(r.entryId));
+      const ts = r.ts ? new Date(r.ts) : new Date();
+      const day = Utilities.formatDate(ts, TZ, 'yyyy-MM-dd');
+      const phone = normPhone_(r.phone);
+      const key = dayKey_(day, r.classId, phone);
+      if (seenDay.has(key)) return; // already checked in today
+      seenDay.add(key);
+      rows.push([ts, new Date(day + 'T00:00:00+05:30'), String(r.classId), String(r.name).trim(), phone, String(r.entryId)]);
+    });
+    if (rows.length) sh.getRange(last + 1, 1, rows.length, rows[0].length).setValues(rows);
+    // invalid records are acknowledged too, so a bad entry can't block the phone's queue
+    return { ok: true, saved: records.filter(r => r && r.entryId).map(r => r.entryId) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function formatDropIns_(sh) {
+  sh.getRange('A:A').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+  sh.getRange('B:B').setNumberFormat('yyyy-mm-dd');
+  sh.getRange('E:E').setNumberFormat('@'); // phone as text
 }
 
 // One student per phone number: a repeat registration returns the existing ID instead.
