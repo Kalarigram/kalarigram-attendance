@@ -18,7 +18,7 @@ register themselves and mark their own attendance.
 ## Front end (`index.html`, single file, no build)
 Views:
 1. **Welcome** — shown when no `kg_me`. "Register" / "Find my name".
-2. **Register** — name*, phone*, email, emergency contact*, class checkboxes* (active classes from cached `action=all`). Client validates phone (10 digits; `+91`/leading `0` stripped). POST `register`; on success show the Student ID and remember the student. Needs network; failures show a retry message (not queued).
+2. **Register** — name*, phone*, class checkboxes* (active classes from cached `action=all`; scrollable list with a type-to-filter search box once there are 6+ classes, selected classes shown as removable chips). Client validates phone (10 digits; `+91`/leading `0` stripped). POST `register`; on success show the Student ID and remember the student. Needs network; failures show a retry message (not queued).
 3. **Find me** — search the union of all enrolled students by name or ID; tap to remember.
 4. **Home** — name + ID, today's date, one card per enrolled class with a lamp and a "Mark present" button. Marked cards show a lit lamp and "Present today".
 

@@ -117,6 +117,45 @@
   .check input { width: 18px; height: 18px; margin: 0; accent-color: var(--kalari-red); flex: none; }
   .check small { display: block; color: var(--text-muted); font-size: 12.5px; font-weight: 400; }
   .check:has(input:checked) { border-color: var(--kalari-red); background: #fff; }
+  .check mark { background: none; color: var(--kalari-red); font-weight: 700; }
+  .legend-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+  .legend-row .legend { margin: 0; }
+  .count { font-size: 12.5px; font-weight: 600; color: var(--kalari-red); }
+  /* selected classes, shown above the list so they stay visible while scrolling or searching */
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .chips:empty { display: none; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+    padding: 5px 6px 5px 12px; border: 0; border-radius: 999px; cursor: pointer;
+    background: var(--kalari-red); color: #fff; font-size: 13px; font-weight: 600;
+  }
+  .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip b { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; font-size: 15px; font-weight: 500; background: rgba(255,255,255,.18); flex: none; }
+  .chip:hover { background: var(--kalari-red-hover); }
+  /* bordered box: search on top, list scrolls inside with a fixed height */
+  .class-picker { border: 1.5px solid var(--border-color); border-radius: 10px; background: var(--bg-parchment); overflow: hidden; }
+  .class-picker:focus-within { border-color: var(--kalari-gold); }
+  .class-picker[aria-invalid="true"] { border-color: var(--kalari-red); }
+  .class-search { position: relative; border-bottom: 1px solid var(--border-color); background: #fff; color: var(--text-muted); }
+  .class-search svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); pointer-events: none; }
+  .class-search input[type=search] {
+    width: 100%; min-height: 46px; padding: 11px 14px 11px 40px; border: 0; outline: none; background: transparent;
+    font-size: 16px; color: var(--text-dark); -webkit-appearance: none; appearance: none;
+  }
+  .class-picker .checks {
+    max-height: 264px; overflow-y: auto; overscroll-behavior: contain; padding: 8px;
+    scrollbar-width: thin; scrollbar-color: var(--kalari-gold) transparent;
+    /* soft fade at the edges hints that there is more to scroll */
+    background:
+      linear-gradient(var(--bg-parchment) 30%, transparent) top / 100% 24px no-repeat local,
+      linear-gradient(transparent, var(--bg-parchment) 70%) bottom / 100% 24px no-repeat local,
+      radial-gradient(farthest-side at 50% 0, rgba(34,30,29,.12), transparent) top / 100% 10px no-repeat scroll,
+      radial-gradient(farthest-side at 50% 100%, rgba(34,30,29,.12), transparent) bottom / 100% 10px no-repeat scroll;
+  }
+  .class-picker .checks::-webkit-scrollbar { width: 6px; }
+  .class-picker .checks::-webkit-scrollbar-thumb { background: var(--kalari-gold); border-radius: 3px; }
+  .class-picker .check { background: #fff; }
+  .class-picker .hint { margin: 4px 6px; }
 
   /* ---- buttons ---- */
   .submit-btn {
@@ -223,16 +262,18 @@
       <input type="tel" id="rPhone" placeholder="10-digit mobile number" inputmode="tel" autocomplete="tel">
     </div>
     <div class="form-group">
-      <label for="rEmail">Email <span class="opt">(optional)</span></label>
-      <input type="email" id="rEmail" placeholder="you@example.com" inputmode="email" autocomplete="email">
-    </div>
-    <div class="form-group">
-      <label for="rEmergency">Emergency Contact</label>
-      <input type="text" id="rEmergency" placeholder="Name and phone number" autocomplete="off">
-    </div>
-    <div class="form-group">
-      <span class="legend" id="rClassesLabel">Your Classes</span>
-      <div class="checks" id="rClasses" role="group" aria-labelledby="rClassesLabel"></div>
+      <div class="legend-row">
+        <span class="legend" id="rClassesLabel">Your Classes</span>
+        <span class="count" id="rClassCount" aria-live="polite"></span>
+      </div>
+      <div class="chips" id="rChips" aria-label="Selected classes"></div>
+      <div class="class-picker" id="rPicker">
+        <div class="class-search" id="rSearchWrap">
+          <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13 13l4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <input type="search" id="rClassSearch" placeholder="Type to find a class" aria-label="Search classes" aria-controls="rClasses" autocomplete="off" enterkeyhint="search">
+        </div>
+        <div class="checks" id="rClasses" role="group" aria-labelledby="rClassesLabel"></div>
+      </div>
     </div>
     <button type="submit" class="submit-btn" id="regBtn">Register</button>
     <div class="message" id="regMsg" role="status" aria-live="polite" hidden></div>
@@ -508,40 +549,82 @@ function submitCheckIn(e) {
 }
 
 /* ===== register ===== */
+const SEARCH_FROM = 6; // show the class search box once there are this many classes
+
 function renderClassChecks() {
   const box = $('rClasses');
   const checked = new Set([...box.querySelectorAll('input:checked')].map(i => i.value));
   box.textContent = '';
-  if (!data || !data.classes.length) { box.append(el('p', 'hint', 'Loading classes…')); return; }
+  const n = data ? data.classes.length : 0;
+  $('rSearchWrap').hidden = n < SEARCH_FROM;
+  if (!n) { box.append(el('p', 'hint', data ? 'No classes are open for registration right now.' : 'Loading classes…')); updateClassChips(); return; }
   data.classes.forEach(c => {
     const lab = el('label', 'check');
     const cb = el('input'); cb.type = 'checkbox'; cb.value = c.id; cb.checked = checked.has(c.id);
-    const txt = el('span', null, c.name);
+    const txt = el('span');
+    const nm = el('span', 'nm', c.name);
     const sub = [c.schedule, c.location].filter(Boolean).join(', ');
+    txt.append(nm);
     if (sub) txt.append(el('small', null, sub));
+    lab.dataset.search = [c.name, sub].join(' ').toLowerCase();
+    lab.dataset.name = c.name;
     lab.append(cb, txt);
     box.append(lab);
   });
+  box.append(el('p', 'hint none-match'));
+  filterClasses();
+  updateClassChips();
+}
+
+// every typed word must appear in the class name, schedule or location
+function filterClasses() {
+  const q = $('rClassSearch').value.trim();
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  let shown = 0;
+  $('rClasses').querySelectorAll('.check').forEach(lab => {
+    const hit = words.every(w => lab.dataset.search.includes(w));
+    lab.hidden = !hit;
+    if (hit) shown++;
+    const nm = lab.querySelector('.nm');
+    nm.replaceChildren(highlight(lab.dataset.name, words[0] || ''));
+  });
+  const none = $('rClasses').querySelector('.none-match');
+  if (none) { none.hidden = !!shown; none.textContent = `No class matches "${q}". Try another word.`; }
+}
+
+function updateClassChips() {
+  const chips = $('rChips');
+  chips.textContent = '';
+  const sel = [...$('rClasses').querySelectorAll('input:checked')];
+  sel.forEach(cb => {
+    const chip = el('button', 'chip');
+    chip.type = 'button';
+    const name = cb.closest('.check').dataset.name;
+    chip.setAttribute('aria-label', 'Remove ' + name);
+    chip.append(el('span', null, name), el('b', null, '\u00d7'));
+    chip.addEventListener('click', () => { cb.checked = false; updateClassChips(); });
+    chips.append(chip);
+  });
+  $('rClassCount').textContent = sel.length ? `${sel.length} selected` : '';
+  if (sel.length && $('rPicker').hasAttribute('aria-invalid')) { invalid($('rPicker'), false); $('regMsg').hidden = true; }
 }
 
 async function submitRegister(e) {
   e.preventDefault();
-  const f = { name: $('rName'), phone: $('rPhone'), email: $('rEmail'), emergency: $('rEmergency') };
+  const f = { name: $('rName'), phone: $('rPhone') };
   const body = {
-    name: f.name.value.trim(), phone: normPhone(f.phone.value), email: f.email.value.trim(), emergency: f.emergency.value.trim(),
+    name: f.name.value.trim(), phone: normPhone(f.phone.value),
     classIds: [...$('rClasses').querySelectorAll('input:checked')].map(i => i.value),
   };
   const problems = [
     invalid(f.name, body.name.length < 2) && 'your full name',
     invalid(f.phone, body.phone.length !== 10) && 'a 10-digit phone number',
-    invalid(f.email, !!body.email && !/^\S+@\S+\.\S+$/.test(body.email)) && 'a valid email (or leave it empty)',
-    invalid(f.emergency, body.emergency.length < 3) && 'an emergency contact',
-    !body.classIds.length && 'at least one class',
+    invalid($('rPicker'), !body.classIds.length) && 'at least one class',
   ].filter(Boolean);
   if (problems.length) {
     say('regMsg', 'error', 'Please add ' + problems.join(', ').replace(/, ([^,]*)$/, ' and $1') + '.');
     const first = document.querySelector('#regForm [aria-invalid="true"]');
-    if (first) first.focus();
+    if (first) (first.id === 'rPicker' ? first.querySelector('input:not([hidden])') || first : first).focus();
     return;
   }
   const btn = $('regBtn');
@@ -565,6 +648,7 @@ async function submitRegister(e) {
     LS.set('kg_me', me);
     if (!out.existing) LS.set('kg_lastClass', body.classIds[0]);
     $('regForm').reset();
+    filterClasses(); updateClassChips();
     $('classSelect').value = ''; picked = null; // next check-in screen picks the new student + class
     $('iName').textContent = out.existing ? `${name}, you're already registered.` : `Welcome to Kalarigram, ${firstName(name)}.`;
     $('iSid').textContent = out.id;
@@ -660,9 +744,18 @@ $('studentInput').addEventListener('keydown', e => {
   else if (e.key === 'Escape' && open) { e.preventDefault(); closeList(); }
 });
 $('studentClear').addEventListener('click', () => { pick(null); $('studentInput').focus(); });
-['dName', 'dPhone', 'rName', 'rPhone', 'rEmail', 'rEmergency'].forEach(id => $(id).addEventListener('input', () => invalid($(id), false)));
+['dName', 'dPhone', 'rName', 'rPhone'].forEach(id => $(id).addEventListener('input', () => invalid($(id), false)));
 $('checkInForm').addEventListener('submit', submitCheckIn);
 $('regForm').addEventListener('submit', submitRegister);
+$('rClasses').addEventListener('change', updateClassChips);
+$('rClassSearch').addEventListener('input', filterClasses);
+$('rClassSearch').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { // Enter ticks the class when the search narrows it to one
+    e.preventDefault();
+    const vis = [...$('rClasses').querySelectorAll('.check:not([hidden]) input')];
+    if (vis.length === 1) { vis[0].checked = !vis[0].checked; updateClassChips(); $('rClassSearch').select(); }
+  } else if (e.key === 'Escape' && e.target.value) { e.preventDefault(); e.target.value = ''; filterClasses(); }
+});
 
 window.addEventListener('online', () => { flush(); load(); });
 window.addEventListener('offline', updateSync);

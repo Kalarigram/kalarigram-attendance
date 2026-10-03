@@ -15,7 +15,7 @@
  *   GET  ?action=students&class=ID&pin=…
  *   POST (text/plain JSON) {action:'attendance', pin, records:[{entryId,classId,studentId,ts}]}
  *        → one row per student + class + day; repeats are skipped but still reported as saved
- *   POST (text/plain JSON) {action:'register', pin, name, phone, email, emergency, classIds:[…]}
+ *   POST (text/plain JSON) {action:'register', pin, name, phone, classIds:[…]}  (Email / Emergency Contact columns kept, left blank)
  *        → {ok, id, enrolled} or, if the phone is already registered, {ok, id, name, existing:true}
  *   POST (text/plain JSON) {action:'dropin', pin, records:[{entryId,classId,name,phone,ts}]}
  *        → unregistered visitors, written to the Drop-ins tab; one row per phone + class + day
