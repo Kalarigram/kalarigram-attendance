@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#FDFBF7">
-<title>Kalarigram Check-In</title>
-<link rel="icon" href="https://static.wixstatic.com/media/664a97_0bcab977d50d47f494807c03716ff3e2~mv2.png">
+<title>Kalarigram Attendance</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 46 58%27%3E%3Cpath d=%27M23 1.5c3.6 4.6 5.4 8.3 5.4 11.2a5.4 5.4 0 0 1-10.8 0c0-2.9 1.8-6.6 5.4-11.2z%27 fill=%27%23F2A33A%27/%3E%3Cpath d=%27M8 21h30c-1.2 4.6-7.6 8-15 8S9.2 25.6 8 21zM20.5 29h5v16h-5zM12 56c0-5.2 5-9.5 11-9.5s11 4.3 11 9.5z%27 fill=%27%23A0402C%27/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -40,13 +40,40 @@
     background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 16px;
     padding: 32px 24px 28px; box-shadow: 0 10px 30px rgba(34,30,29,.06);
   }
-  .brand-header { text-align: center; margin-bottom: 4px; }
-  .brand-logo { display: block; width: 180px; max-width: 80%; height: auto; margin: 0 auto 12px; }
-  .subtitle {
-    font-family: 'Cinzel', Georgia, serif; font-weight: 700; font-size: 13px;
-    letter-spacing: 1.5px; text-transform: uppercase; color: var(--kalari-gold); margin: 0;
+  /* ---- brand band: vector, so it stays sharp on every screen ---- */
+  .container { overflow: hidden; }
+  .brand-header {
+    position: relative; text-align: center; color: #fff;
+    margin: -32px -24px 26px; padding: 30px 24px 24px;
+    background:
+      radial-gradient(120% 90% at 50% 0%, rgba(232,180,90,.22), transparent 60%),
+      linear-gradient(160deg, #B24A33 0%, var(--kalari-red) 45%, #7A2C1D 100%);
   }
-  .divider { height: 1px; background: linear-gradient(to right, transparent, var(--border-color), transparent); margin: 20px 0 24px; }
+  /* temple-border trim along the bottom edge */
+  .brand-header::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 9px;
+    background:
+      linear-gradient(var(--kalari-gold), var(--kalari-gold)) bottom / 100% 2px no-repeat,
+      linear-gradient(45deg, var(--kalari-gold) 50%, transparent 50%) left bottom 2px / 10px 7px repeat-x,
+      linear-gradient(-45deg, var(--kalari-gold) 50%, transparent 50%) left bottom 2px / 10px 7px repeat-x;
+  }
+  .brand-mark { display: block; width: 46px; height: 58px; margin: 0 auto 10px; filter: drop-shadow(0 2px 6px rgba(0,0,0,.25)); }
+  .brand-name {
+    font-family: 'Cinzel', Georgia, serif; font-weight: 700; font-size: 30px; line-height: 1;
+    letter-spacing: 5px; margin: 0 0 0 5px; /* offset the trailing letter-space so it centres */
+    text-shadow: 0 1px 2px rgba(0,0,0,.2);
+  }
+  .brand-tag {
+    display: flex; align-items: center; justify-content: center; gap: 10px; margin: 10px 0 0;
+    font-size: 11px; font-weight: 600; letter-spacing: 2.2px; text-transform: uppercase; color: #F3D9A6; white-space: nowrap;
+  }
+  .brand-tag::before, .brand-tag::after { content: ""; width: 22px; height: 1px; background: currentColor; opacity: .6; }
+  .subtitle {
+    display: inline-block; margin: 16px 0 6px; padding: 6px 14px 5px; border-radius: 999px;
+    font-family: 'Cinzel', Georgia, serif; font-weight: 700; font-size: 12.5px; letter-spacing: 1.6px; text-transform: uppercase;
+    color: var(--kalari-red); background: #FFF7E8; box-shadow: 0 2px 8px rgba(0,0,0,.15);
+  }
+  .divider { display: none; }
 
   /* ---- toggle ---- */
   .btn-toggle-group {
@@ -196,7 +223,13 @@
   #sync { display: block; margin-top: 10px; font-size: 12.5px; color: var(--text-muted); min-height: 1em; }
   #sync.pending { color: var(--kalari-gold); }
 
-  @media (max-width: 360px) { .container { padding: 26px 18px 22px; } }
+  @media (max-width: 360px) {
+    .container { padding: 26px 18px 22px; }
+    .brand-header { margin: -26px -18px 22px; padding: 26px 18px 22px; }
+    .brand-name { font-size: 26px; letter-spacing: 4px; margin-left: 4px; }
+    .brand-tag { letter-spacing: 1.6px; gap: 8px; }
+    .brand-tag::before, .brand-tag::after { width: 14px; }
+  }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
@@ -204,8 +237,22 @@
 
 <div class="container">
   <div class="brand-header">
-    <img src="https://static.wixstatic.com/media/664a97_0bcab977d50d47f494807c03716ff3e2~mv2.png" alt="Kalarigram" class="brand-logo">
-    <p class="subtitle" id="subtitle">Gurukulam Check-In</p>
+    <!-- nilavilakku (brass oil lamp), lit at the start of every kalari session -->
+    <svg class="brand-mark" viewBox="0 0 46 58" aria-hidden="true">
+      <defs>
+        <linearGradient id="brass" x1="0" x2="1"><stop offset="0" stop-color="#E9B95E"/><stop offset=".5" stop-color="#FBE3A6"/><stop offset="1" stop-color="#C88D32"/></linearGradient>
+        <radialGradient id="flame" cx=".5" cy=".7" r=".6"><stop offset="0" stop-color="#FFF6D6"/><stop offset=".55" stop-color="#FFC24A"/><stop offset="1" stop-color="#F28C28"/></radialGradient>
+      </defs>
+      <path d="M23 1.5c3.6 4.6 5.4 8.3 5.4 11.2a5.4 5.4 0 0 1-10.8 0c0-2.9 1.8-6.6 5.4-11.2z" fill="url(#flame)"/>
+      <path d="M8 21h30c-1.2 4.6-7.6 8-15 8S9.2 25.6 8 21z" fill="url(#brass)"/>
+      <path d="M21 29h4l1.2 18h-6.4z" fill="url(#brass)"/>
+      <rect x="18.5" y="36" width="9" height="2.6" rx="1.3" fill="url(#brass)"/>
+      <path d="M12 56c0-5.2 5-9.5 11-9.5s11 4.3 11 9.5z" fill="url(#brass)"/>
+      <rect x="10" y="55" width="26" height="2.5" rx="1.25" fill="url(#brass)"/>
+    </svg>
+    <h1 class="brand-name">Kalarigram</h1>
+    <p class="brand-tag">Est. 1950 &middot; Auroville</p>
+    <p class="subtitle" id="subtitle">Class Check-In</p>
   </div>
   <div class="divider"></div>
 
@@ -332,7 +379,7 @@ function go(screen) {
   $('regForm').hidden = screen !== 'register';
   $('issued').hidden = screen !== 'issued';
   $('belowCheckin').hidden = screen !== 'checkin';
-  $('subtitle').textContent = screen === 'checkin' ? 'Gurukulam Check-In' : 'Student Registration';
+  $('subtitle').textContent = screen === 'checkin' ? 'Class Check-In' : 'Student Registration';
   if (screen === 'register') { renderClassChecks(); $('regMsg').hidden = true; }
   if (screen === 'checkin') { $('checkInMsg').hidden = true; renderCheckIn(); }
   window.scrollTo(0, 0);
