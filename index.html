@@ -205,6 +205,7 @@
   .message { margin-top: 20px; padding: 12px 14px; border-radius: 8px; font-size: 14px; font-weight: 500; line-height: 1.45; }
   .message.success { background: var(--ok-bg); color: var(--ok-ink); border: 1px solid var(--ok-line); }
   .message.error { background: var(--err-bg); color: var(--kalari-red); border: 1px solid var(--err-line); }
+  .message.warn { background: #FFF6E5; color: #8A5300; border: 1px solid #F1D29A; }
   .message.info { background: var(--bg-parchment); color: var(--text-muted); border: 1px solid var(--border-color); }
   .message strong { font-weight: 700; }
 
@@ -217,6 +218,15 @@
   }
   .issued .note { font-size: 14px; color: var(--text-muted); margin: 0 auto 18px; max-width: 30ch; line-height: 1.5; }
   .issued .name { font-weight: 600; margin: 0 0 14px; }
+
+  /* class fixed by a QR link (?class=) */
+  .class-fixed {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 14px; border-radius: 8px; background: var(--bg-parchment); border: 1.5px solid var(--border-color);
+  }
+  .class-fixed .legend { margin: 0 0 2px; color: var(--text-muted); font-weight: 600; font-size: 12px; }
+  .class-fixed strong { font-size: 16px; font-weight: 600; }
+  .class-fixed .text-btn { white-space: nowrap; flex: none; }
 
   /* ---- under the card ---- */
   .below { width: 100%; max-width: 420px; text-align: center; margin-top: 18px; font-size: 14px; color: var(--text-muted); }
@@ -258,9 +268,15 @@
 
   <!-- ===== Check in ===== -->
   <form id="checkInForm" novalidate>
-    <div class="form-group">
+    <div class="form-group" id="classPicker">
       <label for="classSelect">Select Class</label>
       <select id="classSelect"><option value="">Loading classes…</option></select>
+    </div>
+    <div class="form-group" id="classFixed" hidden>
+      <div class="class-fixed">
+        <div><span class="legend">Class</span><strong id="classFixedName"></strong></div>
+        <button type="button" class="text-btn" id="changeClass">Change class</button>
+      </div>
     </div>
 
     <div class="btn-toggle-group" role="group" aria-label="Check-in type">
@@ -307,6 +323,7 @@
     <div class="form-group">
       <label for="rPhone">Phone Number</label>
       <input type="tel" id="rPhone" placeholder="10-digit mobile number" inputmode="tel" autocomplete="tel">
+      <p class="hint">Outside India? Start with + and your country code.</p>
     </div>
     <div class="form-group">
       <div class="legend-row">
@@ -346,6 +363,8 @@
 const API_URL = 'https://script.google.com/macros/s/AKfycbzNYz_6yKmLfNtdk7YznjZXDAXdkwLFXmGpDJW9Z3YHyYpp1KInmVjkfoP9zKdA3PzRAA/exec';
 const REFRESH_MS = 30 * 60 * 1000; // refresh class/student list every 30 min
 const FLUSH_MS = 15 * 1000;        // retry queue every 15 s
+const WAIT_MS = 8000;              // how long a check-in waits for the server's reply before falling back to the queue
+const APP_VERSION = '2026-10-05';  // bump when the stored data format changes
 
 /* ===== storage (wrapped: never break the page) ===== */
 const LS = {
@@ -363,7 +382,18 @@ let data = LS.get('kg_data', null);  // { classes:[{id,name,location,schedule,ty
 let me = LS.get('kg_me', null);      // last student checked in / registered on this phone: { id, name, classIds? }
 let pin = LS.get('kg_pin', '');      // only used if the API ever requires one
 let mode = 'Regular';
-let flushing = false;
+let flushing = null;                 // promise of the sync in progress
+const urlClass = new URLSearchParams(location.search).get('class') || '';
+let classUnlocked = false;           // "Change class" pressed on a QR link
+
+/* one-time upgrades of what's stored on the phone */
+if (LS.get('kg_version', '') !== APP_VERSION) {
+  // drop-ins queued by the previous version move into the single queue
+  const old = LS.get('kg_dropins', []);
+  if (old.length) LS.set('kg_queue', LS.get('kg_queue', []).concat(old.map(r => ({ ...r, type: 'Drop-in', method: 'QR' }))));
+  try { localStorage.removeItem('kg_dropins'); } catch {}
+  LS.set('kg_version', APP_VERSION);
+}
 
 /* checked-in-today set (per device), resets daily; keys 'classId|studentId' or 'classId|dropin:phone' */
 function marked() {
@@ -371,7 +401,8 @@ function marked() {
   return m.date === today() ? m : { date: today(), keys: [] };
 }
 function isMarked(key) { return marked().keys.includes(key); }
-function addMarked(key) { const m = marked(); m.keys.push(key); LS.set('kg_marked', m); }
+function addMarked(key) { const m = marked(); if (!m.keys.includes(key)) m.keys.push(key); LS.set('kg_marked', m); }
+function unMark(key) { const m = marked(); m.keys = m.keys.filter(k => k !== key); LS.set('kg_marked', m); }
 
 /* ===== screens inside the card ===== */
 function go(screen) {
@@ -411,7 +442,11 @@ function renderCheckIn() {
   if (!data.classes.length) { cs.append(new Option('No active classes right now', '')); renderStudents(); return; }
   cs.append(new Option('-- Select Class --', ''));
   data.classes.forEach(c => cs.append(new Option(c.name, c.id)));
-  cs.value = data.classes.some(c => c.id === keep) ? keep : '';
+  const fixed = !classUnlocked && data.classes.find(c => c.id === urlClass);
+  cs.value = fixed ? fixed.id : data.classes.some(c => c.id === keep) ? keep : '';
+  $('classPicker').hidden = !!fixed;
+  $('classFixed').hidden = !fixed;
+  if (fixed) $('classFixedName').textContent = fixed.name;
   renderStudents();
 }
 
@@ -533,24 +568,29 @@ function setMode(m) {
   $('checkInMsg').hidden = true;
 }
 
-function normPhone(v) {
-  let d = String(v).replace(/\D/g, '');
+// Same rules as normalizePhone_() in Code.gs. Returns '' when invalid.
+// Indian mobile → 10 digits starting 6-9; other countries → '+' and 8-15 digits.
+function normalizePhone(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  let d = s.replace(/\D/g, '');
+  if (s.startsWith('+') && !d.startsWith('91')) return d.length >= 8 && d.length <= 15 ? '+' + d : '';
   if (d.length === 12 && d.startsWith('91')) d = d.slice(2);
-  if (d.length === 11 && d.startsWith('0')) d = d.slice(1);
-  return d;
+  else if (d.length === 11 && d.startsWith('0')) d = d.slice(1);
+  return /^[6-9]\d{9}$/.test(d) ? d : '';
 }
 
 function invalid(input, bad) { bad ? input.setAttribute('aria-invalid', 'true') : input.removeAttribute('aria-invalid'); return bad; }
 
 function enqueue(key, rec) { const q = LS.get(key, []); q.push(rec); LS.set(key, q); }
 
-function submitCheckIn(e) {
+async function submitCheckIn(e) {
   e.preventDefault();
   const cs = $('classSelect');
   const cls = data && data.classes.find(c => c.id === cs.value);
   if (invalid(cs, !cls)) { say('checkInMsg', 'error', 'Please select a class.'); cs.focus(); return; }
   LS.set('kg_lastClass', cls.id);
-  const ts = new Date().toISOString();
+  const rec = { entryId: uuid(), classId: cls.id, ts: new Date().toISOString(), type: mode, method: 'QR' };
+  let who, key;
 
   if (mode === 'Regular') {
     const input = $('studentInput');
@@ -565,34 +605,55 @@ function submitCheckIn(e) {
       if (!input.disabled) { input.focus(); openList(); }
       return;
     }
-    if (isMarked(cls.id + '|' + s.id)) {
-      say('checkInMsg', 'info', [{ b: s.name }, ' is already checked in for ', { b: cls.name }, ' today.']);
-      return;
-    }
-    enqueue('kg_queue', { entryId: uuid(), classId: cls.id, studentId: s.id, ts });
-    addMarked(cls.id + '|' + s.id);
+    rec.studentId = s.id;
+    who = s.name;
+    key = cls.id + '|' + s.id;
     me = { id: s.id, name: s.name, classIds: me && me.id === s.id ? me.classIds : undefined };
     LS.set('kg_me', me);
-    say('checkInMsg', 'success', ['Welcome, ', { b: firstName(s.name) }, '. You are checked in for ', { b: cls.name }, '.']);
   } else {
     const n = $('dName'), p = $('dPhone');
-    const name = n.value.trim(), phone = normPhone(p.value);
-    const badName = invalid(n, name.length < 2), badPhone = invalid(p, phone.length !== 10);
+    const name = n.value.trim(), phone = normalizePhone(p.value);
+    const badName = invalid(n, name.length < 2), badPhone = invalid(p, !phone);
     if (badName || badPhone) {
-      say('checkInMsg', 'error', badName ? 'Please enter your full name.' : 'Please enter a 10-digit phone number.');
+      say('checkInMsg', 'error', badName ? 'Please enter your full name.' : 'Please enter a valid phone number.');
       (badName ? n : p).focus();
       return;
     }
-    if (isMarked(cls.id + '|dropin:' + phone)) {
-      say('checkInMsg', 'info', [{ b: name }, ' is already checked in for ', { b: cls.name }, ' today.']);
-      return;
-    }
-    enqueue('kg_dropins', { entryId: uuid(), classId: cls.id, name, phone, ts });
-    addMarked(cls.id + '|dropin:' + phone);
-    n.value = ''; p.value = '';
-    say('checkInMsg', 'success', ['Welcome, ', { b: firstName(name) }, '. You are checked in for ', { b: cls.name }, ' as a drop-in.']);
+    Object.assign(rec, { name, phone });
+    who = name;
+    key = cls.id + '|dropin:' + phone;
   }
-  flush();
+
+  // quick check on this phone; the server is still the source of truth
+  if (isMarked(key)) {
+    say('checkInMsg', 'warn', [{ b: who }, ' is already checked in for ', { b: cls.name }, ' today.']);
+    return;
+  }
+
+  enqueue('kg_queue', rec);
+  addMarked(key);
+  const btn = $('checkInBtn');
+  btn.disabled = true; btn.textContent = 'Checking in…';
+  const res = await Promise.race([sync().then(r => r[rec.entryId]), new Promise(r => setTimeout(r, WAIT_MS))]);
+  btn.disabled = false; btn.textContent = 'Check In';
+
+  if (res && res.status === 'saved') {
+    say('checkInMsg', 'success', res.message || `Welcome, ${firstName(who)}! You're checked in for ${cls.name}.`);
+  } else if (res && res.status === 'duplicate') {
+    say('checkInMsg', 'warn', res.message || `${who} is already checked in for ${cls.name} today.`);
+  } else if (res && (res.status === 'rejected' || res.status === 'error')) {
+    unMark(key);
+    say('checkInMsg', 'error', res.message || "Couldn't check in. Please ask at the office.");
+    return;
+  } else if (!LS.get('kg_queue', []).some(r => r.entryId === rec.entryId)) {
+    // sent, but the server didn't give a per-record answer (older API version)
+    say('checkInMsg', 'success', ['Welcome, ', { b: firstName(who) }, `. You're checked in for `, { b: cls.name }, '.']);
+  } else {
+    say('checkInMsg', 'info', navigator.onLine
+      ? 'Saved on this phone. The connection is slow, so it will be sent automatically in a moment.'
+      : "You're offline. Your check-in is saved on this phone and will be sent automatically when you're back online.");
+  }
+  if (mode === 'Drop-in') { $('dName').value = ''; $('dPhone').value = ''; }
 }
 
 /* ===== register ===== */
@@ -660,12 +721,12 @@ async function submitRegister(e) {
   e.preventDefault();
   const f = { name: $('rName'), phone: $('rPhone') };
   const body = {
-    name: f.name.value.trim(), phone: normPhone(f.phone.value),
+    name: f.name.value.trim(), phone: normalizePhone(f.phone.value),
     classIds: [...$('rClasses').querySelectorAll('input:checked')].map(i => i.value),
   };
   const problems = [
     invalid(f.name, body.name.length < 2) && 'your full name',
-    invalid(f.phone, body.phone.length !== 10) && 'a 10-digit phone number',
+    invalid(f.phone, !body.phone) && 'a valid phone number',
     invalid($('rPicker'), !body.classIds.length) && 'at least one class',
   ].filter(Boolean);
   if (problems.length) {
@@ -684,7 +745,11 @@ async function submitRegister(e) {
       body: JSON.stringify({ action: 'register', pin, ...body }),
     });
     const out = await res.json();
-    if (!out.ok) throw new Error(out.error || 'failed');
+    if (!out.ok) {
+      // the API explains problems it can name (e.g. phone already registered)
+      if (out.error && /\s/.test(out.error)) { invalid(f.phone, /phone/i.test(out.error)); say('regMsg', 'error', out.error); btn.disabled = false; btn.textContent = 'Register'; return; }
+      throw new Error(out.error || 'failed');
+    }
     const name = out.name || body.name;
     if (!out.existing && data) {
       // show the new student straight away; the background refresh confirms it
@@ -701,7 +766,9 @@ async function submitRegister(e) {
     $('iSid').textContent = out.id;
     $('iNote').textContent = out.existing
       ? 'This phone number is already on our register. To change your classes, please ask at the office.'
-      : 'Please note your Student ID. You can now check in for your classes.';
+      : out.convertedFrom
+        ? 'Welcome to Kalarigram! Your earlier drop-in visits are now linked to this Student ID.'
+        : 'Please note your Student ID. You can now check in for your classes.';
     go('issued');
     load();
   } catch (err) {
@@ -713,32 +780,39 @@ async function submitRegister(e) {
 }
 
 /* ===== sync: optimistic + queued ===== */
-async function send(action, key) {
-  const batch = LS.get(key, []).slice(0, 50);
-  if (!batch.length) return;
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ action, pin, records: batch }),
-  });
-  const out = await res.json();
-  if (out.ok) {
-    const done = new Set(out.saved);
-    LS.set(key, LS.get(key, []).filter(r => !done.has(r.entryId)));
-  }
-}
-
-function pending() { return LS.get('kg_queue', []).length + LS.get('kg_dropins', []).length; }
-
-async function flush() {
-  if (flushing || !navigator.onLine || !pending()) return updateSync();
-  flushing = true; updateSync();
-  try { await send('attendance', 'kg_queue'); await send('dropin', 'kg_dropins'); }
-  catch (e) { /* offline or slow — stays queued */ }
-  flushing = false;
+// Sends queued check-ins. Resolves to { entryId: {status, message} } for what the server answered.
+function sync() {
+  if (flushing) return flushing.then(() => sync());
+  if (!navigator.onLine || !pending()) { updateSync(); return Promise.resolve({}); }
+  flushing = (async () => {
+    const answers = {};
+    try {
+      const batch = LS.get('kg_queue', []).slice(0, 50);
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // simple request → no CORS preflight
+        body: JSON.stringify({ action: 'attendance', pin, records: batch }),
+      });
+      const out = await res.json();
+      if (out.ok) {
+        const done = new Set(out.saved || []);
+        (out.results || []).forEach(r => { answers[r.entryId] = r; done.add(r.entryId); }); // rejected ones won't succeed on retry either
+        LS.set('kg_queue', LS.get('kg_queue', []).filter(r => !done.has(r.entryId)));
+      }
+    } catch (e) { /* offline or slow — stays queued */ }
+    return answers;
+  })();
   updateSync();
-  if (pending() && navigator.onLine) setTimeout(flush, 3000);
+  return flushing.then(answers => {
+    flushing = null;
+    updateSync();
+    if (pending() && navigator.onLine) setTimeout(sync, 3000);
+    return answers;
+  });
 }
+const flush = () => { sync(); };
+
+function pending() { return LS.get('kg_queue', []).length; }
 
 function updateSync() {
   const n = pending(), s = $('sync');
@@ -773,6 +847,7 @@ async function load() {
 
 /* ===== wiring ===== */
 $('btnReg').onclick = () => setMode('Regular');
+$('changeClass').onclick = () => { classUnlocked = true; renderCheckIn(); $('classSelect').focus(); };
 $('btnDrop').onclick = () => setMode('Drop-in');
 $('classSelect').addEventListener('change', () => { invalid($('classSelect'), false); $('checkInMsg').hidden = true; renderStudents(); });
 $('studentInput').addEventListener('input', () => {

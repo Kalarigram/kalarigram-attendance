@@ -1,100 +1,180 @@
 /**
  * Kalarigram Attendance API — Google Apps Script, bound to the Kalarigram Sheet
+ * v2 (2026-10-05): drop-ins, same-day duplicate guard, phone checks, Bharat Kalari classes, dashboard split.
  *
- * SETUP (one time)
- * 1. Open the Sheet (Kalarigram Google account) → Extensions → Apps Script → paste this file.
- * 2. Project Settings → Script properties → add  PIN = <kiosk PIN>
- * 3. Select setup() → Run (authorise). Creates tabs + headers, seeds Classes, builds Dashboard.
- *    Then review/complete the Classes tab (locations, dates).
- * 4. Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone → copy URL.
- * 5. Later changes: Deploy → Manage deployments → ✎ → Version: New version (same URL).
+ * SETUP / UPGRADE
+ * 1. Select setup() → Run. Safe to run any time: creates missing tabs/headers, runs the one-off v2
+ *    migration (only once), rebuilds the Dashboard, clears the cache. Never deletes data.
+ * 2. Deploy → Manage deployments → ✎ → Version: New version (keeps the same URL).
+ * 3. Optional: Script property FRONTEND_URL = GitHub Pages check-in page, then run getClassLinks()
+ *    to write one ?class= link per active class into the "QR Links" tab.
+ * 4. Optional: Script property PIN switches on the PIN check (off when not set).
  *
- * API
- *   GET  ?action=all&pin=…              → { classes, students:{classId:[{id,name}]} }
- *   GET  ?action=classes&pin=…
- *   GET  ?action=students&class=ID&pin=…
- *   POST (text/plain JSON) {action:'attendance', pin, records:[{entryId,classId,studentId,ts}]}
- *        → one row per student + class + day; repeats are skipped but still reported as saved
- *   POST (text/plain JSON) {action:'register', pin, name, phone, classIds:[…]}  (Email / Emergency Contact columns kept, left blank)
- *        → {ok, id, enrolled} or, if the phone is already registered, {ok, id, name, existing:true}
- *   POST (text/plain JSON) {action:'dropin', pin, records:[{entryId,classId,name,phone,ts}]}
- *        → unregistered visitors, written to the Drop-ins tab; one row per phone + class + day
+ * API (all responses JSON)
+ *   GET  ?action=all                    → { ok, classes:[{id,name,location,schedule,type}], students:{classId:[{id,name}]}, updated }
+ *   GET  ?action=classes                → { ok, classes }
+ *   GET  ?action=students&class=ID      → { ok, students:[{id,name}] }
+ *   POST (text/plain JSON) {action:'attendance', records:[ record, ... ]}
+ *        record = { entryId, classId, ts, type:'Regular'|'Drop-in', studentId?, name?, phone?, method? }
+ *        (type missing → 'Regular', so old clients keep working)
+ *        → { ok, saved:[entryId...], results:[{ entryId, status, message, personId?, name?, visit? }] }
+ *          status: 'saved' | 'duplicate' | 'rejected'
+ *          'saved' also covers an entryId that was already written (safe retry).
+ *          Every processed entryId is listed in "saved", so the client can always clear it from its queue.
+ *   POST {action:'register', name, phone, email, emergency, classIds:[...]}
+ *        → { ok, id, enrolled:[classId...], convertedFrom? }  or { ok:false, error }
+ *          Rejects an invalid phone, or a phone already used by an Active student.
  */
 
 const TZ = 'Asia/Kolkata';
 const CACHE_KEY = 'bootstrap_v1';
 const CACHE_TTL = 600; // seconds; also cleared on edits / registrations
+const SCAN_ROWS = 2000; // recent Attendance rows scanned for duplicates
 
 const TABS = {
   Students:    ['Student ID', 'Name', 'Phone', 'Email', 'Emergency Contact', 'Status', 'Registered On'],
   Classes:     ['Class ID', 'Name', 'Location', 'Schedule', 'Type', 'Start', 'End', 'Active'],
   Enrollments: ['Student ID', 'Class ID', 'Enrolled On'],
-  Attendance:  ['Timestamp', 'Date', 'Class ID', 'Student ID', 'Entry ID'],
-  Payments:    ['Student ID', 'Amount', 'Date', 'Mode', 'Receipt No', 'Notes'],
-  'Drop-ins':  ['Timestamp', 'Date', 'Class ID', 'Name', 'Phone', 'Entry ID'],
+  Attendance:  ['Timestamp', 'Date', 'Class ID', 'Student ID', 'Entry ID', 'Person Type', 'Name', 'Method', 'Notes'],
+  Dropins:     ['Drop-in ID', 'Name', 'Phone', 'First Seen', 'Last Seen', 'Visits', 'Converted To', 'Notes'],
+  Payments:    ['Student ID', 'Amount', 'Date', 'Mode', 'Receipt No', 'Notes', 'Person Type', 'Class ID', 'Purpose'],
 };
 
-// Starter rows for Classes — edit locations/schedules/dates in the sheet afterwards.
+const BK_CLASSES = [
+  ['BK-KIDS',  'Bharat Kalari Kids',            'Bharat Kalari', '4:30 PM daily', 'Regular', '', '', true],
+  ['BK-7AM',   'Bharat Kalari Morning 7 AM',    'Bharat Kalari', '7:00 AM daily', 'Regular', '', '', true],
+  ['BK-530PM', 'Bharat Kalari Evening 5:30 PM', 'Bharat Kalari', '5:30 PM daily', 'Regular', '', '', true],
+];
+
+// Starter rows for an empty Classes tab (fresh install only).
 const SEED_CLASSES = [
   ['KG-6AM',   'Kalarigram 6 AM',              'Kalarigram',    '6:00 AM daily',  'Regular',  '', '', true],
   ['KG-5PM-B', 'Kalarigram 5 PM Beginners',    'Kalarigram',    '5:00 PM daily',  'Regular',  '', '', true],
   ['KG-5PM-A', 'Kalarigram 5 PM Advanced',     'Kalarigram',    '5:00 PM daily',  'Regular',  '', '', true],
-  ['BK',       'Bharat Kalari',                'Bharat Kalari', '',               'Regular',  '', '', true],
   ['DIP-AM',   'Diploma Morning',              'Kalarigram',    '7:00–9:00 AM',   'Diploma',  '', '', true],
   ['DIP-PM',   'Diploma Evening',              'Kalarigram',    '4:00–5:00 PM',   'Diploma',  '', '', true],
   ['WS-STICK', 'Workshop: Long & Short Stick', 'Kalarigram',    '',               'Workshop', new Date(2026, 11, 1), new Date(2027, 1, 28), true],
-];
+].concat(BK_CLASSES);
 
-/* ---------------- setup ---------------- */
+/* ---------------- setup + migration ---------------- */
 
 function setup() {
   const ss = SpreadsheetApp.getActive();
   ss.setSpreadsheetTimeZone(TZ);
-  Object.keys(TABS).forEach(name => {
-    const sh = ss.getSheetByName(name) || ss.insertSheet(name);
-    if (sh.getLastRow() === 0) {
-      sh.appendRow(TABS[name]);
-      sh.setFrozenRows(1);
-      sh.getRange(1, 1, 1, TABS[name].length).setFontWeight('bold');
-    }
-  });
-  const classes = ss.getSheetByName('Classes');
+  Object.keys(TABS).forEach(function (name) { ensureHeaders_(ss, name, TABS[name]); });
+
+  const classes = sheet_(ss, 'Classes');
   if (classes.getLastRow() === 1) {
     classes.getRange(2, 1, SEED_CLASSES.length, SEED_CLASSES[0].length).setValues(SEED_CLASSES);
-    classes.getRange(2, 8, SEED_CLASSES.length, 1).insertCheckboxes();
+    classes.getRange(2, 8, SEED_CLASSES.length, 1).insertCheckboxes().setValue(true);
   }
-  ss.getSheetByName('Students').getRange('C:C').setNumberFormat('@'); // phone as text
-  ss.getSheetByName('Attendance').getRange('A:A').setNumberFormat('yyyy-mm-dd hh:mm:ss');
-  ss.getSheetByName('Attendance').getRange('B:B').setNumberFormat('yyyy-mm-dd');
-  formatDropIns_(ss.getSheetByName('Drop-ins'));
+
+  migrateV2_(ss);
+
+  sheet_(ss, 'Students').getRange('C:C').setNumberFormat('@'); // phone as text
+  sheet_(ss, 'Dropins').getRange('C:C').setNumberFormat('@');
+  sheet_(ss, 'Dropins').getRange('D:E').setNumberFormat('yyyy-mm-dd');
+  sheet_(ss, 'Attendance').getRange('A:A').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+  sheet_(ss, 'Attendance').getRange('B:B').setNumberFormat('yyyy-mm-dd');
   buildDashboard_(ss);
   clearCache();
 }
 
+// Writes a header only where the cell is empty — never renames or moves existing columns.
+function ensureHeaders_(ss, name, headers) {
+  const sh = sheet_(ss, name) || ss.insertSheet(name, ss.getSheets().length);
+  const width = Math.max(sh.getLastColumn(), headers.length);
+  const existing = sh.getLastRow() > 0 ? sh.getRange(1, 1, 1, width).getValues()[0] : [];
+  headers.forEach(function (h, i) {
+    if (String(existing[i] || '').trim() === '') sh.getRange(1, i + 1).setValue(h);
+  });
+  sh.setFrozenRows(1);
+  sh.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+  return sh;
+}
+
+// One-off upgrade to schema v2. Guarded by Script property SCHEMA_VERSION.
+function migrateV2_(ss) {
+  const props = PropertiesService.getScriptProperties();
+  if (Number(props.getProperty('SCHEMA_VERSION') || 1) >= 2) return;
+
+  // Classes: add the three Bharat Kalari classes, switch off the old single "BK".
+  const cl = sheet_(ss, 'Classes');
+  const ids = rows_(ss, 'Classes').map(function (r) { return String(r[0]).trim(); });
+  const add = BK_CLASSES.filter(function (r) { return ids.indexOf(r[0]) === -1; });
+  if (add.length) {
+    const start = cl.getLastRow() + 1;
+    cl.getRange(start, 1, add.length, 8).setValues(add);
+    cl.getRange(start, 8, add.length, 1).insertCheckboxes().setValue(true);
+  }
+  const bk = ids.indexOf('BK');
+  if (bk > -1) cl.getRange(bk + 2, 8).setValue(false);
+
+  // Attendance: backfill Person Type / Name / Method on existing rows.
+  const at = sheet_(ss, 'Attendance');
+  const n = at.getLastRow() - 1;
+  if (n > 0) {
+    const names = {};
+    rows_(ss, 'Students').forEach(function (r) { names[String(r[0]).trim()] = String(r[1]).trim(); });
+    const d = at.getRange(2, 4, n, 5).getValues(); // D..H
+    const out = d.map(function (r) {
+      return [r[2] || 'Regular', r[3] || names[String(r[0]).trim()] || '', r[4] || 'QR'];
+    });
+    at.getRange(2, 6, n, 3).setValues(out);
+  }
+
+  props.setProperty('SCHEMA_VERSION', '2');
+}
+
 function buildDashboard_(ss) {
-  const sh = ss.getSheetByName('Dashboard') || ss.insertSheet('Dashboard');
+  const sh = sheet_(ss, 'Dashboard') || ss.insertSheet('Dashboard', ss.getSheets().length);
   sh.clear();
-  sh.getRange('A1:A4').setValues([['Today'], ['Unique students today'], ['Class check-ins today'], ['Drop-ins today']]);
+  const A = 'Attendance!';
+  sh.getRange('A1:A5').setValues([['Today'], ['Unique people today'], ['Regular students today'], ['Drop-ins today'], ['Class check-ins today']]);
   sh.getRange('B1').setFormula('=TODAY()').setNumberFormat('dd mmm yyyy');
-  sh.getRange('B2').setFormula('=COUNTUNIQUEIFS(Attendance!D2:D,Attendance!B2:B,B1)');
-  sh.getRange('B3').setFormula('=IFERROR(ROWS(UNIQUE(FILTER(Attendance!C2:C&"|"&Attendance!D2:D,Attendance!B2:B=B1))),0)');
-  sh.getRange('B4').setFormula("=COUNTIFS('Drop-ins'!B2:B,B1)");
+  sh.getRange('B2').setFormula('=COUNTUNIQUEIFS(' + A + 'D2:D,' + A + 'B2:B,B1)');
+  sh.getRange('B3').setFormula('=COUNTUNIQUEIFS(' + A + 'D2:D,' + A + 'B2:B,B1,' + A + 'F2:F,"<>Drop-in")');
+  sh.getRange('B4').setFormula('=COUNTUNIQUEIFS(' + A + 'D2:D,' + A + 'B2:B,B1,' + A + 'F2:F,"Drop-in")');
+  sh.getRange('B5').setFormula('=IFERROR(ROWS(UNIQUE(FILTER(' + A + 'C2:C&"|"&' + A + 'D2:D,' + A + 'B2:B=B1))),0)');
 
-  sh.getRange('A5:C5').setValues([['Class ID', 'Class', 'Present today']]);
-  sh.getRange('A6').setFormula('=FILTER(Classes!A2:B,Classes!H2:H=TRUE)');
-  sh.getRange('C6').setFormula('=MAP(A6:A,LAMBDA(c,IF(c="","",COUNTUNIQUEIFS(Attendance!D2:D,Attendance!C2:C,c,Attendance!B2:B,$B$1))))');
+  // Per class, today (active classes, grouped by location)
+  sh.getRange('A7:F7').setValues([['Class ID', 'Class', 'Location', 'Regular', 'Drop-in', 'Total']]);
+  sh.getRange('A8').setFormula('=IFERROR(SORT(FILTER(Classes!A2:C,Classes!H2:H=TRUE),3,TRUE,1,TRUE),"")');
+  sh.getRange('D8').setFormula('=MAP(A8:A,LAMBDA(c,IF(c="","",COUNTUNIQUEIFS(' + A + 'D2:D,' + A + 'C2:C,c,' + A + 'B2:B,$B$1,' + A + 'F2:F,"<>Drop-in"))))');
+  sh.getRange('E8').setFormula('=MAP(A8:A,LAMBDA(c,IF(c="","",COUNTUNIQUEIFS(' + A + 'D2:D,' + A + 'C2:C,c,' + A + 'B2:B,$B$1,' + A + 'F2:F,"Drop-in"))))');
+  sh.getRange('F8').setFormula('=MAP(A8:A,D8:D,E8:E,LAMBDA(c,r,d,IF(c="","",r+d)))');
 
-  sh.getRange('E5:F5').setValues([['Date', 'Unique students']]);
-  sh.getRange('E6').setFormula('=IFERROR(SORT(UNIQUE(FILTER(Attendance!B2:B,Attendance!B2:B<>"")),1,FALSE),"")');
-  sh.getRange('F6').setFormula('=MAP(E6:E,LAMBDA(d,IF(d="","",COUNTUNIQUEIFS(Attendance!D2:D,Attendance!B2:B,d))))');
-  sh.getRange('E6:E').setNumberFormat('dd mmm yyyy');
+  // Per day
+  sh.getRange('H7:J7').setValues([['Date', 'Unique people', 'Drop-ins']]);
+  sh.getRange('H8').setFormula('=IFERROR(SORT(UNIQUE(FILTER(' + A + 'B2:B,' + A + 'B2:B<>"")),1,FALSE),"")');
+  sh.getRange('I8').setFormula('=MAP(H8:H,LAMBDA(d,IF(d="","",COUNTUNIQUEIFS(' + A + 'D2:D,' + A + 'B2:B,d))))');
+  sh.getRange('J8').setFormula('=MAP(H8:H,LAMBDA(d,IF(d="","",COUNTUNIQUEIFS(' + A + 'D2:D,' + A + 'B2:B,d,' + A + 'F2:F,"Drop-in"))))');
+  sh.getRange('H8:H').setNumberFormat('dd mmm yyyy');
+  sh.getRange('D8:F').setNumberFormat('0');
+  sh.getRange('I8:J').setNumberFormat('0');
 
-  sh.getRange('A1:A4').setFontWeight('bold');
-  sh.getRange('A5:F5').setFontWeight('bold');
+  sh.getRange('A1:A5').setFontWeight('bold');
+  sh.getRange('A7:J7').setFontWeight('bold');
   sh.setColumnWidth(1, 190);
   sh.setColumnWidth(2, 230);
-  const blank = ss.getSheetByName('Sheet1');
+  sh.setColumnWidth(3, 120);
+  const blank = sheet_(ss, 'Sheet1');
   if (blank && blank.getLastRow() === 0) ss.deleteSheet(blank);
+}
+
+// Writes one check-in link per active class to the "QR Links" tab (needs Script property FRONTEND_URL).
+function getClassLinks() {
+  const base = PropertiesService.getScriptProperties().getProperty('FRONTEND_URL');
+  if (!base) throw new Error('Add Script property FRONTEND_URL (the GitHub Pages check-in page URL) first.');
+  const ss = SpreadsheetApp.getActive();
+  const sh = sheet_(ss, 'QR Links') || ss.insertSheet('QR Links', ss.getSheets().length);
+  sh.clear();
+  const sep = base.indexOf('?') > -1 ? '&' : '?';
+  const rows = rows_(ss, 'Classes').filter(function (r) { return r[0] && isTrue_(r[7]); }).map(function (r) {
+    return [String(r[0]).trim(), String(r[1]), String(r[2]), base + sep + 'class=' + encodeURIComponent(String(r[0]).trim())];
+  });
+  sh.getRange(1, 1, 1, 4).setValues([['Class ID', 'Class', 'Location', 'Check-in link']]).setFontWeight('bold');
+  if (rows.length) sh.getRange(2, 1, rows.length, 4).setValues(rows);
 }
 
 /* ---------------- HTTP ---------------- */
@@ -121,136 +201,236 @@ function doPost(e) {
     checkPin_(body.pin);
     if (body.action === 'attendance') return json_(markAttendance_(body.records || []));
     if (body.action === 'register')   return json_(register_(body));
-    if (body.action === 'dropin')     return json_(markDropIns_(body.records || []));
     return json_({ ok: false, error: 'unknown action' });
   } catch (err) {
     return json_({ ok: false, error: String(err.message || err) });
   }
 }
 
-/* ---------------- actions ---------------- */
+/* ---------------- attendance ---------------- */
 
-// Append-only. Skips entryIds already written (safe for client retries) and a second
-// check-in for the same student + class + day. Skipped records are still reported as
-// saved so the phone clears them from its queue.
+// Rules: one check-in per person per class per date (the record's own date, so offline
+// records are checked against the day they happened). Repeat entryIds are skipped quietly.
 function markAttendance_(records) {
-  const valid = records.filter(r => r && r.entryId && r.classId && r.studentId);
-  if (!valid.length) return { ok: true, saved: [] };
-
-  const lock = LockService.getScriptLock();
-  lock.waitLock(15000);
-  try {
-    const sh = SpreadsheetApp.getActive().getSheetByName('Attendance');
-    const last = sh.getLastRow();
-    const start = Math.max(2, last - 999);
-    const recent = last >= 2 ? sh.getRange(start, 2, last - start + 1, 4).getValues() : []; // Date, Class, Student, Entry
-    const seen = new Set(recent.map(r => String(r[3])));
-    const seenDay = new Set(recent.map(r => dayKey_(r[0], r[1], r[2])));
-
-    const rows = [];
-    valid.forEach(r => {
-      if (seen.has(String(r.entryId))) return;
-      seen.add(String(r.entryId));
-      const ts = r.ts ? new Date(r.ts) : new Date();
-      const day = Utilities.formatDate(ts, TZ, 'yyyy-MM-dd');
-      const key = dayKey_(day, r.classId, r.studentId);
-      if (seenDay.has(key)) return; // already present today
-      seenDay.add(key);
-      rows.push([ts, new Date(day + 'T00:00:00+05:30'), String(r.classId), String(r.studentId), String(r.entryId)]);
-    });
-    if (rows.length) sh.getRange(last + 1, 1, rows.length, rows[0].length).setValues(rows);
-    return { ok: true, saved: valid.map(r => r.entryId) };
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-// Unregistered visitors. Same rules as attendance, keyed on phone instead of Student ID.
-// The tab is created on first use, so setup() doesn't need re-running.
-function markDropIns_(records) {
-  const valid = records.filter(r => r && r.entryId && r.classId && String(r.name || '').trim() && normPhone_(r.phone).length === 10);
-  if (!valid.length) return { ok: true, saved: records.filter(r => r && r.entryId).map(r => r.entryId) };
+  const list = (records || []).filter(function (r) { return r && r.entryId && r.classId; });
+  if (!list.length) return { ok: true, saved: [], results: [] };
 
   const lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
     const ss = SpreadsheetApp.getActive();
-    let sh = ss.getSheetByName('Drop-ins');
-    if (!sh) {
-      sh = ss.insertSheet('Drop-ins');
-      sh.appendRow(TABS['Drop-ins']);
-      sh.setFrozenRows(1);
-      sh.getRange(1, 1, 1, TABS['Drop-ins'].length).setFontWeight('bold');
-      formatDropIns_(sh);
-    }
+    const sh = sheet_(ss, 'Attendance');
     const last = sh.getLastRow();
-    const start = Math.max(2, last - 999);
-    const recent = last >= 2 ? sh.getRange(start, 2, last - start + 1, 5).getValues() : []; // Date, Class, Name, Phone, Entry
-    const seen = new Set(recent.map(r => String(r[4])));
-    const seenDay = new Set(recent.map(r => dayKey_(r[0], r[1], normPhone_(r[3]))));
-
-    const rows = [];
-    valid.forEach(r => {
-      if (seen.has(String(r.entryId))) return;
-      seen.add(String(r.entryId));
-      const ts = r.ts ? new Date(r.ts) : new Date();
-      const day = Utilities.formatDate(ts, TZ, 'yyyy-MM-dd');
-      const phone = normPhone_(r.phone);
-      const key = dayKey_(day, r.classId, phone);
-      if (seenDay.has(key)) return; // already checked in today
-      seenDay.add(key);
-      rows.push([ts, new Date(day + 'T00:00:00+05:30'), String(r.classId), String(r.name).trim(), phone, String(r.entryId)]);
+    const start = Math.max(2, last - SCAN_ROWS + 1);
+    const recent = last >= 2 ? sh.getRange(start, 1, last - start + 1, 5).getValues() : [];
+    const seenEntry = new Set();
+    const seenKey = new Set();
+    recent.forEach(function (r) {
+      seenEntry.add(String(r[4]));
+      seenKey.add(fmtDate_(r[1]) + '|' + String(r[2]).trim() + '|' + String(r[3]).trim());
     });
+
+    const ctx = context_(ss);
+    const today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+    let drops = null;
+    const rows = [], results = [], saved = [];
+
+    list.forEach(function (r) {
+      const entryId = String(r.entryId);
+      const done = function (status, message, extra) {
+        const res = { entryId: entryId, status: status, message: message };
+        if (extra) Object.keys(extra).forEach(function (k) { res[k] = extra[k]; });
+        results.push(res);
+        saved.push(entryId);
+      };
+
+      if (seenEntry.has(entryId)) return done('saved', 'Already recorded.');
+
+      const classId = String(r.classId).trim();
+      const cls = ctx.classes[classId];
+      if (!cls) return done('rejected', 'Unknown class: ' + classId);
+
+      let ts = r.ts ? new Date(r.ts) : new Date();
+      if (isNaN(ts.getTime())) ts = new Date();
+      const day = Utilities.formatDate(ts, TZ, 'yyyy-MM-dd');
+      const when = day === today ? 'today' : 'on ' + day;
+      const method = String(r.method || 'QR');
+      const wantsDrop = /^drop/i.test(String(r.type || ''));
+
+      let personId = '', name = '', personType = 'Regular', notes = '', drop = null, isNewDrop = false, phone = '';
+
+      if (!wantsDrop) {
+        personId = String(r.studentId || '').trim();
+        if (!personId) return done('rejected', 'Please select your name.');
+        const st = ctx.students[personId];
+        name = st ? st.name : String(r.studentName || r.name || '').trim();
+        if (!st) notes = 'unknown student ID';
+        else if (!ctx.enrolled.has(personId + '|' + classId)) notes = 'not enrolled in this class';
+      } else {
+        name = String(r.name || '').trim();
+        phone = normalizePhone_(r.phone);
+        if (name.length < 2) return done('rejected', 'Please enter your full name.');
+        if (!phone) return done('rejected', 'Please enter a valid phone number.');
+        const sid = ctx.phoneToStudent[phone];
+        if (sid) {
+          // Registered student used the drop-in form → count them as a regular check-in.
+          personId = sid;
+          name = ctx.students[sid].name;
+          notes = 'checked in via drop-in form' + (ctx.enrolled.has(sid + '|' + classId) ? '' : '; not enrolled in this class');
+        } else {
+          personType = 'Drop-in';
+          drops = drops || loadDropins_(ss);
+          drop = drops.byPhone[phone] || null;
+          if (drop) { personId = drop.id; if (drop.name) name = drop.name; }
+          else isNewDrop = true;
+        }
+      }
+
+      if (!isNewDrop) {
+        const key = day + '|' + classId + '|' + personId;
+        if (seenKey.has(key)) {
+          return done('duplicate', (name || 'This person') + ' is already checked in for ' + cls.name + ' ' + when + '.',
+                      { personId: personId, name: name });
+        }
+      }
+
+      if (personType === 'Drop-in') {
+        if (isNewDrop) {
+          drops.max += 1;
+          drop = { id: 'DROP-' + String(drops.max).padStart(3, '0'), name: name, phone: phone,
+                   firstSeen: day, lastSeen: day, visits: 0, row: 0, isNew: true, dirty: true };
+          drops.byPhone[phone] = drop;
+          drops.created.push(drop);
+          personId = drop.id;
+        }
+        drop.visits += 1;
+        if (!drop.lastSeen || day > drop.lastSeen) drop.lastSeen = day;
+        if (!drop.firstSeen || day < drop.firstSeen) drop.firstSeen = day;
+        drop.dirty = true;
+      }
+
+      rows.push([ts, dateVal_(day), classId, personId, entryId, personType, name, method, notes]);
+      seenEntry.add(entryId);
+      seenKey.add(day + '|' + classId + '|' + personId);
+
+      let msg;
+      if (personType === 'Drop-in') msg = drop.visits === 1 ? 'Welcome, ' + name + '! Drop-in recorded.' : 'Welcome back, ' + name + '! Visit #' + drop.visits + '.';
+      else if (wantsDrop) msg = 'Welcome back, ' + name + '! You are a registered student — next time choose Regular.';
+      else msg = 'Welcome back, ' + name + '!';
+      done('saved', msg, { personId: personId, name: name, personType: personType, visit: drop ? drop.visits : undefined });
+    });
+
     if (rows.length) sh.getRange(last + 1, 1, rows.length, rows[0].length).setValues(rows);
-    // invalid records are acknowledged too, so a bad entry can't block the phone's queue
-    return { ok: true, saved: records.filter(r => r && r.entryId).map(r => r.entryId) };
+    if (drops) saveDropins_(drops);
+    return { ok: true, saved: saved, results: results };
   } finally {
     lock.releaseLock();
   }
 }
 
-function formatDropIns_(sh) {
-  sh.getRange('A:A').setNumberFormat('yyyy-mm-dd hh:mm:ss');
-  sh.getRange('B:B').setNumberFormat('yyyy-mm-dd');
-  sh.getRange('E:E').setNumberFormat('@'); // phone as text
+function context_(ss) {
+  const classes = {};
+  rows_(ss, 'Classes').forEach(function (r) {
+    const id = String(r[0]).trim();
+    if (id) classes[id] = { name: String(r[1]).trim() || id, active: isTrue_(r[7]) };
+  });
+  const students = {}, phoneToStudent = {};
+  rows_(ss, 'Students').forEach(function (r) {
+    const id = String(r[0]).trim();
+    if (!id) return;
+    const status = String(r[5] || 'Active').trim();
+    students[id] = { name: String(r[1]).trim(), active: status === 'Active' };
+    const pk = phoneKey_(r[2]);
+    if (pk && status === 'Active' && !phoneToStudent[pk]) phoneToStudent[pk] = id;
+  });
+  const enrolled = new Set(rows_(ss, 'Enrollments').map(function (r) {
+    return String(r[0]).trim() + '|' + String(r[1]).trim();
+  }));
+  return { classes: classes, students: students, phoneToStudent: phoneToStudent, enrolled: enrolled };
 }
 
-// One student per phone number: a repeat registration returns the existing ID instead.
+function loadDropins_(ss) {
+  const sh = sheet_(ss, 'Dropins') || ensureHeaders_(ss, 'Dropins', TABS.Dropins);
+  const n = sh.getLastRow() - 1;
+  const vals = n > 0 ? sh.getRange(2, 1, n, 8).getValues() : [];
+  const byPhone = {};
+  let max = 0;
+  vals.forEach(function (r, i) {
+    const id = String(r[0]).trim();
+    const num = parseInt(id.replace(/\D/g, ''), 10);
+    if (!isNaN(num)) max = Math.max(max, num);
+    const pk = phoneKey_(r[2]);
+    if (id && pk && !byPhone[pk]) {
+      byPhone[pk] = { id: id, name: String(r[1]).trim(), phone: pk, firstSeen: fmtDate_(r[3]), lastSeen: fmtDate_(r[4]),
+                      visits: Number(r[5]) || 0, row: i + 2, isNew: false, dirty: false };
+    }
+  });
+  return { sh: sh, byPhone: byPhone, max: max, created: [] };
+}
+
+function saveDropins_(d) {
+  Object.keys(d.byPhone).forEach(function (k) {
+    const x = d.byPhone[k];
+    if (x.dirty && !x.isNew) d.sh.getRange(x.row, 4, 1, 3).setValues([[dateVal_(x.firstSeen), dateVal_(x.lastSeen), x.visits]]);
+  });
+  if (d.created.length) {
+    const rows = d.created.map(function (x) {
+      return [x.id, x.name, x.phone, dateVal_(x.firstSeen), dateVal_(x.lastSeen), x.visits, '', ''];
+    });
+    d.sh.getRange(d.sh.getLastRow() + 1, 1, rows.length, 8).setValues(rows);
+  }
+}
+
+/* ---------------- registration ---------------- */
+
 function register_(b) {
   const name = String(b.name || '').trim();
   if (!name) throw new Error('name required');
-  const phone = normPhone_(b.phone);
+  const rawPhone = String(b.phone || '').trim();
+  const phone = rawPhone ? normalizePhone_(rawPhone) : '';
+  if (rawPhone && !phone) throw new Error('Please enter a valid phone number.');
 
   const lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
     const ss = SpreadsheetApp.getActive();
-    const st = ss.getSheetByName('Students');
-    const n = st.getLastRow() - 1;
-    const existing = n > 0 ? st.getRange(2, 1, n, 3).getValues() : []; // ID, Name, Phone
+    const st = sheet_(ss, 'Students');
+    const existing = rows_(ss, 'Students');
 
-    if (phone.length === 10) {
-      const dup = existing.find(r => r[0] && normPhone_(r[2]) === phone);
-      if (dup) return { ok: true, id: String(dup[0]).trim(), name: String(dup[1]).trim(), existing: true };
+    if (phone) {
+      const dup = existing.filter(function (r) {
+        return String(r[5] || 'Active').trim() === 'Active' && phoneKey_(r[2]) === phone;
+      })[0];
+      if (dup) throw new Error('This phone number is already registered as ' + String(dup[1]).trim() + ' (' + String(dup[0]).trim() + ').');
     }
 
-    const max = existing.reduce((m, r) => {
+    const max = existing.reduce(function (m, r) {
       const num = parseInt(String(r[0]).replace(/\D/g, ''), 10);
       return isNaN(num) ? m : Math.max(m, num);
     }, 0);
     const id = 'KG-' + String(max + 1).padStart(3, '0');
     const now = new Date();
 
-    st.appendRow([id, name, phone || String(b.phone || ''), String(b.email || ''), String(b.emergency || ''), 'Active', now]);
+    st.appendRow([id, name, phone, String(b.email || '').trim(), String(b.emergency || '').trim(), 'Active', now]);
 
-    const validClasses = new Set(getBootstrap_().classes.map(c => c.id));
-    const enrol = (b.classIds || []).map(String).filter(c => validClasses.has(c)).map(c => [id, c, now]);
+    const validClasses = new Set(getBootstrap_().classes.map(function (c) { return c.id; }));
+    const enrol = (b.classIds || []).map(String).filter(function (c) { return validClasses.has(c); })
+      .map(function (c) { return [id, c, now]; });
     if (enrol.length) {
-      const en = ss.getSheetByName('Enrollments');
+      const en = sheet_(ss, 'Enrollments');
       en.getRange(en.getLastRow() + 1, 1, enrol.length, 3).setValues(enrol);
     }
+
+    // A known drop-in has now registered: link the two records.
+    let convertedFrom;
+    if (phone) {
+      const d = loadDropins_(ss);
+      const x = d.byPhone[phone];
+      if (x) { d.sh.getRange(x.row, 7).setValue(id); convertedFrom = x.id; }
+    }
+
     clearCache();
-    return { ok: true, id, enrolled: enrol.map(r => r[1]) };
+    return { ok: true, id: id, enrolled: enrol.map(function (r) { return r[1]; }), convertedFrom: convertedFrom };
   } finally {
     lock.releaseLock();
   }
@@ -265,26 +445,26 @@ function getBootstrap_() {
 
   const ss = SpreadsheetApp.getActive();
   const classes = rows_(ss, 'Classes')
-    .filter(r => r[0] && isTrue_(r[7]))
-    .map(r => ({ id: String(r[0]).trim(), name: String(r[1]), location: String(r[2]), schedule: String(r[3]), type: String(r[4]) }));
+    .filter(function (r) { return r[0] && isTrue_(r[7]); })
+    .map(function (r) { return { id: String(r[0]).trim(), name: String(r[1]), location: String(r[2]), schedule: String(r[3]), type: String(r[4]) }; });
 
   const active = {};
-  rows_(ss, 'Students').forEach(r => {
+  rows_(ss, 'Students').forEach(function (r) {
     const status = String(r[5] || 'Active').trim();
     if (r[0] && status === 'Active') active[String(r[0]).trim()] = String(r[1]).trim();
   });
 
   const students = {};
-  classes.forEach(c => (students[c.id] = []));
-  rows_(ss, 'Enrollments').forEach(r => {
+  classes.forEach(function (c) { students[c.id] = []; });
+  rows_(ss, 'Enrollments').forEach(function (r) {
     const sid = String(r[0]).trim(), cid = String(r[1]).trim();
-    if (students[cid] && active[sid] && !students[cid].some(s => s.id === sid)) {
+    if (students[cid] && active[sid] && !students[cid].some(function (s) { return s.id === sid; })) {
       students[cid].push({ id: sid, name: active[sid] }); // ID + name only, no personal data
     }
   });
-  Object.values(students).forEach(list => list.sort((a, b) => a.name.localeCompare(b.name)));
+  Object.keys(students).forEach(function (k) { students[k].sort(function (a, b) { return a.name.localeCompare(b.name); }); });
 
-  const data = { classes, students, updated: new Date().toISOString() };
+  const data = { classes: classes, students: students, updated: new Date().toISOString() };
   try { cache.put(CACHE_KEY, JSON.stringify(data), CACHE_TTL); } catch (e) { /* >100KB: skip cache */ }
   return data;
 }
@@ -301,25 +481,48 @@ function onEdit(e) {
 
 /* ---------------- helpers ---------------- */
 
+// Valid Indian mobile → 10 digits. International (+ not 91) → '+digits' (8–15). Invalid → ''.
+function normalizePhone_(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s) return '';
+  let d = s.replace(/\D/g, '');
+  if (s.charAt(0) === '+' && d.indexOf('91') !== 0) return d.length >= 8 && d.length <= 15 ? '+' + d : '';
+  if (d.length === 12 && d.indexOf('91') === 0) d = d.slice(2);
+  else if (d.length === 11 && d.charAt(0) === '0') d = d.slice(1);
+  return /^[6-9]\d{9}$/.test(d) ? d : '';
+}
+
+// Matching key for phones already in the sheet (lenient, so old/test data still matches).
+function phoneKey_(raw) {
+  const n = normalizePhone_(raw);
+  if (n) return n;
+  const d = String(raw == null ? '' : raw).replace(/\D/g, '');
+  return d.length >= 10 ? d.slice(-10) : d;
+}
+
+function fmtDate_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, TZ, 'yyyy-MM-dd');
+  return String(v || '').trim().slice(0, 10);
+}
+
+function dateVal_(day) {
+  return day ? new Date(day + 'T00:00:00+05:30') : '';
+}
+
+// Looks a tab up by name. (getSheetByName fails in this spreadsheet with "Sheet 1759759947 not found", so we scan getSheets instead.)
+function sheet_(ss, name) {
+  const all = ss.getSheets();
+  for (let i = 0; i < all.length; i++) if (all[i].getName() === name) return all[i];
+  return null;
+}
+
 function rows_(ss, name) {
-  const sh = ss.getSheetByName(name);
+  const sh = sheet_(ss, name);
   return sh && sh.getLastRow() > 1 ? sh.getDataRange().getValues().slice(1) : [];
 }
 
 function isTrue_(v) {
   return v === true || /^(true|yes|y|1)$/i.test(String(v).trim());
-}
-
-// Last 10 digits: '+91 98765-43210' → '9876543210'.
-function normPhone_(v) {
-  const d = String(v || '').replace(/\D/g, '');
-  return d.length > 10 ? d.slice(-10) : d;
-}
-
-// 'yyyy-MM-dd|classId|studentId'; day is a Date (Attendance column B) or a 'yyyy-MM-dd' string.
-function dayKey_(day, classId, studentId) {
-  const d = day instanceof Date ? Utilities.formatDate(day, TZ, 'yyyy-MM-dd') : String(day).slice(0, 10);
-  return d + '|' + String(classId).trim() + '|' + String(studentId).trim();
 }
 
 function checkPin_(given) {
