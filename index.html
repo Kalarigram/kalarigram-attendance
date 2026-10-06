@@ -205,6 +205,15 @@
   .message { margin-top: 20px; padding: 12px 14px; border-radius: 8px; font-size: 14px; font-weight: 500; line-height: 1.45; }
   .message.success { background: var(--ok-bg); color: var(--ok-ink); border: 1px solid var(--ok-line); }
   .message.error { background: var(--err-bg); color: var(--kalari-red); border: 1px solid var(--err-line); }
+  .msg-stack { margin-top: 20px; display: grid; gap: 8px; }
+  .msg-stack .message { margin-top: 0; }
+  .msg-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 12px; }
+  .msg-actions .submit-btn { width: auto; min-height: 44px; margin: 0; padding: 10px 16px; font-size: 15px; }
+  .hint.loading::before {
+    content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 7px; vertical-align: -1px;
+    border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .message.warn { background: #FFF6E5; color: #8A5300; border: 1px solid #F1D29A; }
   .message.info { background: var(--bg-parchment); color: var(--text-muted); border: 1px solid var(--border-color); }
   .message strong { font-weight: 700; }
@@ -300,12 +309,18 @@
 
     <div id="dropInFields" hidden>
       <div class="form-group">
-        <label for="dName">Full Name</label>
-        <input type="text" id="dName" placeholder="Enter your full name" autocomplete="name" autocapitalize="words">
-      </div>
-      <div class="form-group">
         <label for="dPhone">Phone Number</label>
         <input type="tel" id="dPhone" placeholder="Enter phone number" inputmode="tel" autocomplete="tel">
+        <p class="hint loading" id="dLookupHint" role="status" aria-live="polite" hidden>Checking this number…</p>
+      </div>
+      <div class="form-group" id="dWhoGroup" hidden>
+        <span class="legend" id="dWhoLabel">Who's checking in?</span>
+        <div class="checks" id="dWho" role="group" aria-labelledby="dWhoLabel"></div>
+        <p class="hint">Tick everyone arriving together.</p>
+      </div>
+      <div class="form-group" id="dNameGroup">
+        <label for="dName">Full Name</label>
+        <input type="text" id="dName" placeholder="Enter your full name" autocomplete="name" autocapitalize="words">
       </div>
     </div>
 
@@ -323,7 +338,7 @@
     <div class="form-group">
       <label for="rPhone">Phone Number</label>
       <input type="tel" id="rPhone" placeholder="10-digit mobile number" inputmode="tel" autocomplete="tel">
-      <p class="hint">Outside India? Start with + and your country code.</p>
+      <p class="hint">For children, a parent's number is fine; siblings can share it. Outside India? Start with + and the country code.</p>
     </div>
     <div class="form-group">
       <div class="legend-row">
@@ -364,7 +379,7 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbzNYz_6yKmLfNtdk7YznjZX
 const REFRESH_MS = 30 * 60 * 1000; // refresh class/student list every 30 min
 const FLUSH_MS = 15 * 1000;        // retry queue every 15 s
 const WAIT_MS = 8000;              // how long a check-in waits for the server's reply before falling back to the queue
-const APP_VERSION = '2026-10-05';  // bump when the stored data format changes
+const APP_VERSION = '2026-10-05b';  // bump when the stored data format changes
 
 /* ===== storage (wrapped: never break the page) ===== */
 const LS = {
@@ -423,6 +438,16 @@ function say(box, kind, parts) {
   m.textContent = '';
   [].concat(parts).forEach(p => m.append(typeof p === 'string' ? p : el('strong', null, p.b)));
   m.className = 'message ' + kind;
+  m.hidden = false;
+}
+
+// lines: [{kind, text}] — one line looks like say(); several stack, each in its own colour
+function showResults(box, lines) {
+  if (lines.length === 1) return say(box, lines[0].kind, lines[0].text);
+  const m = $(box);
+  m.textContent = '';
+  lines.forEach(l => m.append(el('div', 'message ' + l.kind, l.text)));
+  m.className = 'msg-stack';
   m.hidden = false;
 }
 
@@ -579,6 +604,74 @@ function normalizePhone(raw) {
   return /^[6-9]\d{9}$/.test(d) ? d : '';
 }
 
+/* --- drop-in: who uses this phone? (GET ?action=lookup, short names only) --- */
+let lookup = { phone: '', state: 'idle', students: [], dropins: [] }; // state: idle | loading | done | failed
+let lookupTimer;
+
+function onDropPhone(now) {
+  invalid($('dPhone'), false);
+  const phone = normalizePhone($('dPhone').value);
+  clearTimeout(lookupTimer);
+  if (!phone) { if (lookup.phone) setLookup({ phone: '', state: 'idle' }); return; }
+  if (phone === lookup.phone && lookup.state !== 'failed') return;
+  lookupTimer = setTimeout(() => runLookup(phone), now ? 0 : 400);
+}
+
+async function runLookup(phone) {
+  if (!navigator.onLine) return setLookup({ phone, state: 'failed' });
+  setLookup({ phone, state: 'loading' });
+  let next = { phone, state: 'failed' };
+  try {
+    const res = await fetch(`${API_URL}?action=lookup&phone=${encodeURIComponent(phone)}&pin=${encodeURIComponent(pin)}`);
+    const out = await res.json();
+    if (out.ok) next = { phone, state: 'done', students: out.students || [], dropins: out.dropins || [] };
+  } catch (e) { /* offline or older API: fall back to typing the name */ }
+  if (normalizePhone($('dPhone').value) === phone) setLookup(next); // ignore answers for a number since changed
+}
+
+function setLookup(l) {
+  lookup = Object.assign({ students: [], dropins: [] }, l);
+  renderWho();
+}
+
+function renderWho() {
+  const box = $('dWho');
+  $('dLookupHint').hidden = lookup.state !== 'loading';
+  box.textContent = '';
+  const people = lookup.state !== 'done' ? [] : [
+    ...lookup.students.map(x => ({ kind: 'student', id: x.id, name: x.name, sub: 'Registered student' })),
+    ...lookup.dropins.map(x => ({ kind: 'dropin', id: x.id, name: x.name, sub: `Drop-in · visit #${(Number(x.visits) || 0) + 1}` })),
+  ];
+  $('dWhoGroup').hidden = !people.length;
+  if (people.length) people.push({ kind: 'other', id: '', name: 'Someone else', sub: 'Type their name below' });
+  people.forEach(x => {
+    const lab = el('label', 'check');
+    const cb = el('input'); cb.type = 'checkbox'; cb.value = x.kind + ':' + x.id;
+    cb.dataset.kind = x.kind; cb.dataset.id = x.id; cb.dataset.name = x.name;
+    const txt = el('span', null, x.name);
+    txt.append(el('small', null, x.sub));
+    lab.append(cb, txt);
+    box.append(lab);
+  });
+  syncNameField();
+}
+
+// the name box is needed when nobody is known on this number, or "Someone else" is ticked
+function syncNameField() {
+  const known = !$('dWhoGroup').hidden;
+  const other = !!$('dWho').querySelector('input[data-kind=other]:checked');
+  $('dNameGroup').hidden = known && !other;
+  $('dName').placeholder = known ? "Their full name" : 'Enter your full name';
+}
+
+function resetDropIn() {
+  $('dName').value = ''; $('dPhone').value = '';
+  clearTimeout(lookupTimer);
+  setLookup({ phone: '', state: 'idle' });
+}
+
+const nameKey = n => String(n).toLowerCase().replace(/\s+/g, '');
+
 function invalid(input, bad) { bad ? input.setAttribute('aria-invalid', 'true') : input.removeAttribute('aria-invalid'); return bad; }
 
 function enqueue(key, rec) { const q = LS.get(key, []); q.push(rec); LS.set(key, q); }
@@ -589,8 +682,8 @@ async function submitCheckIn(e) {
   const cls = data && data.classes.find(c => c.id === cs.value);
   if (invalid(cs, !cls)) { say('checkInMsg', 'error', 'Please select a class.'); cs.focus(); return; }
   LS.set('kg_lastClass', cls.id);
-  const rec = { entryId: uuid(), classId: cls.id, ts: new Date().toISOString(), type: mode, method: 'QR' };
-  let who, key;
+  const base = () => ({ entryId: uuid(), classId: cls.id, ts: new Date().toISOString(), type: mode, method: 'QR' });
+  const items = []; // { rec, who, key } — one per person checking in
 
   if (mode === 'Regular') {
     const input = $('studentInput');
@@ -605,55 +698,58 @@ async function submitCheckIn(e) {
       if (!input.disabled) { input.focus(); openList(); }
       return;
     }
-    rec.studentId = s.id;
-    who = s.name;
-    key = cls.id + '|' + s.id;
+    items.push({ rec: { ...base(), studentId: s.id }, who: s.name, key: cls.id + '|' + s.id });
     me = { id: s.id, name: s.name, classIds: me && me.id === s.id ? me.classIds : undefined };
     LS.set('kg_me', me);
   } else {
-    const n = $('dName'), p = $('dPhone');
-    const name = n.value.trim(), phone = normalizePhone(p.value);
-    const badName = invalid(n, name.length < 2), badPhone = invalid(p, !phone);
-    if (badName || badPhone) {
-      say('checkInMsg', 'error', badName ? 'Please enter your full name.' : 'Please enter a valid phone number.');
-      (badName ? n : p).focus();
-      return;
+    const p = $('dPhone'), n = $('dName');
+    const phone = normalizePhone(p.value);
+    if (invalid(p, !phone)) { say('checkInMsg', 'error', 'Please enter a valid phone number.'); p.focus(); return; }
+    const known = !$('dWhoGroup').hidden && lookup.phone === phone;
+    const chosen = known ? [...$('dWho').querySelectorAll('input:checked')] : [];
+    if (known && !chosen.length) { say('checkInMsg', 'error', "Please choose who's checking in."); $('dWho').querySelector('input').focus(); return; }
+    chosen.filter(c => c.dataset.kind !== 'other').forEach(c => {
+      const extra = c.dataset.kind === 'student' ? { studentId: c.dataset.id } : { dropinId: c.dataset.id };
+      items.push({ rec: { ...base(), phone, ...extra }, who: c.dataset.name, key: cls.id + '|' + c.dataset.id });
+    });
+    if (!known || chosen.some(c => c.dataset.kind === 'other')) {
+      const name = n.value.trim();
+      if (invalid(n, name.length < 2)) { say('checkInMsg', 'error', 'Please enter the full name.'); n.focus(); return; }
+      items.push({ rec: { ...base(), phone, name }, who: name, key: cls.id + '|dropin:' + phone + ':' + nameKey(name) });
     }
-    Object.assign(rec, { name, phone });
-    who = name;
-    key = cls.id + '|dropin:' + phone;
   }
 
   // quick check on this phone; the server is still the source of truth
-  if (isMarked(key)) {
-    say('checkInMsg', 'warn', [{ b: who }, ' is already checked in for ', { b: cls.name }, ' today.']);
-    return;
-  }
+  const already = items.filter(i => isMarked(i.key));
+  const fresh = items.filter(i => !isMarked(i.key));
+  const alreadyLines = already.map(i => ({ kind: 'warn', text: `${i.who} is already checked in for ${cls.name} today.` }));
+  if (!fresh.length) return showResults('checkInMsg', alreadyLines);
 
-  enqueue('kg_queue', rec);
-  addMarked(key);
+  fresh.forEach(i => { enqueue('kg_queue', i.rec); addMarked(i.key); });
   const btn = $('checkInBtn');
   btn.disabled = true; btn.textContent = 'Checking in…';
-  const res = await Promise.race([sync().then(r => r[rec.entryId]), new Promise(r => setTimeout(r, WAIT_MS))]);
+  const answers = (await Promise.race([sync(), new Promise(r => setTimeout(r, WAIT_MS))])) || {};
   btn.disabled = false; btn.textContent = 'Check In';
 
-  if (res && res.status === 'saved') {
-    say('checkInMsg', 'success', res.message || `Welcome, ${firstName(who)}! You're checked in for ${cls.name}.`);
-  } else if (res && res.status === 'duplicate') {
-    say('checkInMsg', 'warn', res.message || `${who} is already checked in for ${cls.name} today.`);
-  } else if (res && (res.status === 'rejected' || res.status === 'error')) {
-    unMark(key);
-    say('checkInMsg', 'error', res.message || "Couldn't check in. Please ask at the office.");
-    return;
-  } else if (!LS.get('kg_queue', []).some(r => r.entryId === rec.entryId)) {
-    // sent, but the server didn't give a per-record answer (older API version)
-    say('checkInMsg', 'success', ['Welcome, ', { b: firstName(who) }, `. You're checked in for `, { b: cls.name }, '.']);
-  } else {
-    say('checkInMsg', 'info', navigator.onLine
+  const queued = new Set(LS.get('kg_queue', []).map(r => r.entryId));
+  const lines = alreadyLines.slice();
+  let waiting = false, accepted = false;
+  fresh.forEach(i => {
+    const res = answers[i.rec.entryId];
+    if (res && res.status === 'saved') { accepted = true; lines.push({ kind: 'success', text: res.message || `Welcome, ${firstName(i.who)}! You're checked in for ${cls.name}.` }); }
+    else if (res && res.status === 'duplicate') lines.push({ kind: 'warn', text: res.message || `${i.who} is already checked in for ${cls.name} today.` });
+    else if (res && (res.status === 'rejected' || res.status === 'error')) { unMark(i.key); lines.push({ kind: 'error', text: res.message || "Couldn't check in. Please ask at the office." }); }
+    else if (!queued.has(i.rec.entryId)) { accepted = true; lines.push({ kind: 'success', text: `Welcome, ${firstName(i.who)}! You're checked in for ${cls.name}.` }); } // older API: no per-record answer
+    else waiting = true;
+  });
+  if (waiting) {
+    accepted = true;
+    lines.push({ kind: 'info', text: navigator.onLine
       ? 'Saved on this phone. The connection is slow, so it will be sent automatically in a moment.'
-      : "You're offline. Your check-in is saved on this phone and will be sent automatically when you're back online.");
+      : "You're offline. The check-in is saved on this phone and will be sent automatically when you're back online." });
   }
-  if (mode === 'Drop-in') { $('dName').value = ''; $('dPhone').value = ''; }
+  showResults('checkInMsg', lines);
+  if (mode === 'Drop-in' && accepted) resetDropIn();
 }
 
 /* ===== register ===== */
@@ -717,8 +813,8 @@ function updateClassChips() {
   if (sel.length && $('rPicker').hasAttribute('aria-invalid')) { invalid($('rPicker'), false); $('regMsg').hidden = true; }
 }
 
-async function submitRegister(e) {
-  e.preventDefault();
+async function submitRegister(e, confirmSharedPhone) {
+  if (e) e.preventDefault();
   const f = { name: $('rName'), phone: $('rPhone') };
   const body = {
     name: f.name.value.trim(), phone: normalizePhone(f.phone.value),
@@ -742,11 +838,13 @@ async function submitRegister(e) {
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // simple request → no CORS preflight
-      body: JSON.stringify({ action: 'register', pin, ...body }),
+      body: JSON.stringify({ action: 'register', pin, ...body, ...(confirmSharedPhone ? { confirmSharedPhone: true } : {}) }),
     });
     const out = await res.json();
+    if (!out.ok && out.code === 'PHONE_SHARED') { askSharedPhone(out, body); btn.disabled = false; btn.textContent = 'Register'; return; }
+    if (!out.ok && out.code === 'ALREADY_REGISTERED') { offerCheckIn(out, body); btn.disabled = false; btn.textContent = 'Register'; return; }
     if (!out.ok) {
-      // the API explains problems it can name (e.g. phone already registered)
+      // the API explains problems it can name (e.g. invalid phone)
       if (out.error && /\s/.test(out.error)) { invalid(f.phone, /phone/i.test(out.error)); say('regMsg', 'error', out.error); btn.disabled = false; btn.textContent = 'Register'; return; }
       throw new Error(out.error || 'failed');
     }
@@ -777,6 +875,48 @@ async function submitRegister(e) {
       : "Couldn't register. Check your connection and tap Register again.");
   }
   btn.disabled = false; btn.textContent = 'Register';
+}
+
+// Same phone, different name: confirm it's a different person (e.g. a sibling), then resend.
+function askSharedPhone(out, body) {
+  const m = $('regMsg');
+  const names = (out.existing || []).map(x => x.name);
+  m.textContent = '';
+  m.append('This number is already used by ');
+  names.forEach((nm, i) => { if (i) m.append(i === names.length - 1 ? ' and ' : ', '); m.append(el('strong', null, nm)); });
+  m.append((/\.$/.test(names[names.length - 1] || '') ? ' ' : '. ') + 'Are you registering a different person (e.g. a sibling)?'); // short names already end in '.'
+  const row = el('div', 'msg-actions');
+  const yes = el('button', 'submit-btn', `Yes, register ${firstName(body.name)}`); yes.type = 'button';
+  const no = el('button', 'text-btn', 'Cancel'); no.type = 'button';
+  yes.onclick = () => submitRegister(null, true);
+  no.onclick = () => { m.hidden = true; $('rPhone').focus(); };
+  row.append(yes, no);
+  m.append(row);
+  m.className = 'message warn';
+  m.hidden = false;
+  yes.focus();
+}
+
+// Same phone, same name: they're registered already — offer to check them in.
+function offerCheckIn(out, body) {
+  const m = $('regMsg');
+  m.textContent = '';
+  m.append("You're already registered as ", el('strong', null, `${out.name} (${out.id})`), '.');
+  const row = el('div', 'msg-actions');
+  const go_ = el('button', 'submit-btn', `Check in as ${firstName(out.name)}`); go_.type = 'button';
+  go_.onclick = () => {
+    me = { id: out.id, name: out.name };
+    LS.set('kg_me', me);
+    if (body.classIds.length) LS.set('kg_lastClass', body.classIds[0]);
+    picked = null; $('classSelect').value = '';
+    setMode('Regular');
+    go('checkin');
+  };
+  row.append(go_);
+  m.append(row);
+  m.className = 'message warn';
+  m.hidden = false;
+  go_.focus();
 }
 
 /* ===== sync: optimistic + queued ===== */
@@ -847,6 +987,9 @@ async function load() {
 
 /* ===== wiring ===== */
 $('btnReg').onclick = () => setMode('Regular');
+$('dPhone').addEventListener('input', () => onDropPhone(false));
+$('dPhone').addEventListener('blur', () => onDropPhone(true));
+$('dWho').addEventListener('change', () => { syncNameField(); $('checkInMsg').hidden = true; });
 $('changeClass').onclick = () => { classUnlocked = true; renderCheckIn(); $('classSelect').focus(); };
 $('btnDrop').onclick = () => setMode('Drop-in');
 $('classSelect').addEventListener('change', () => { invalid($('classSelect'), false); $('checkInMsg').hidden = true; renderStudents(); });
@@ -866,9 +1009,9 @@ $('studentInput').addEventListener('keydown', e => {
   else if (e.key === 'Escape' && open) { e.preventDefault(); closeList(); }
 });
 $('studentClear').addEventListener('click', () => { pick(null); $('studentInput').focus(); });
-['dName', 'dPhone', 'rName', 'rPhone'].forEach(id => $(id).addEventListener('input', () => invalid($(id), false)));
+['dName', 'rName', 'rPhone'].forEach(id => $(id).addEventListener('input', () => invalid($(id), false)));
 $('checkInForm').addEventListener('submit', submitCheckIn);
-$('regForm').addEventListener('submit', submitRegister);
+$('regForm').addEventListener('submit', e => submitRegister(e));
 $('rClasses').addEventListener('change', updateClassChips);
 $('rClassSearch').addEventListener('input', filterClasses);
 $('rClassSearch').addEventListener('keydown', e => {
