@@ -1,6 +1,7 @@
 /**
  * Kalarigram Attendance API — Google Apps Script, bound to the Kalarigram Sheet
  * v2 (2026-10-05): drop-ins, same-day duplicate guard, phone checks, Bharat Kalari classes, dashboard split.
+ * v3 (2026-10-05): shared phones — siblings/family can share a number; same phone + same name = duplicate.
  *
  * SETUP / UPGRADE
  * 1. Select setup() → Run. Safe to run any time: creates missing tabs/headers, runs the one-off v2
@@ -14,6 +15,7 @@
  *   GET  ?action=all                    → { ok, classes:[{id,name,location,schedule,type}], students:{classId:[{id,name}]}, updated }
  *   GET  ?action=classes                → { ok, classes }
  *   GET  ?action=students&class=ID      → { ok, students:[{id,name}] }
+ *   GET  ?action=lookup&phone=…          → { ok, phone, students:[{id,name}], dropins:[{id,name,visits}] }  (v3: shared phones)
  *   POST (text/plain JSON) {action:'attendance', records:[ record, ... ]}
  *        record = { entryId, classId, ts, type:'Regular'|'Drop-in', studentId?, name?, phone?, method? }
  *        (type missing → 'Regular', so old clients keep working)
@@ -187,6 +189,7 @@ function doGet(e) {
     switch (p.action) {
       case 'all':      return json_({ ok: true, classes: data.classes, students: data.students, updated: data.updated });
       case 'classes':  return json_({ ok: true, classes: data.classes });
+      case 'lookup':   return json_(lookup_(p.phone));
       case 'students': return json_({ ok: true, students: data.students[p.class] || [] });
       default:         return json_({ ok: false, error: 'unknown action' });
     }
@@ -243,7 +246,6 @@ function markAttendance_(records) {
         results.push(res);
         saved.push(entryId);
       };
-
       if (seenEntry.has(entryId)) return done('saved', 'Already recorded.');
 
       const classId = String(r.classId).trim();
@@ -258,7 +260,6 @@ function markAttendance_(records) {
       const wantsDrop = /^drop/i.test(String(r.type || ''));
 
       let personId = '', name = '', personType = 'Regular', notes = '', drop = null, isNewDrop = false, phone = '';
-
       if (!wantsDrop) {
         personId = String(r.studentId || '').trim();
         if (!personId) return done('rejected', 'Please select your name.');
@@ -269,9 +270,14 @@ function markAttendance_(records) {
       } else {
         name = String(r.name || '').trim();
         phone = normalizePhone_(r.phone);
-        if (name.length < 2) return done('rejected', 'Please enter your full name.');
         if (!phone) return done('rejected', 'Please enter a valid phone number.');
-        const sid = ctx.phoneToStudent[phone];
+        // v3: one phone can belong to several people (siblings / family).
+        // Pick the person explicitly (studentId / dropinId from ?action=lookup), else match by name.
+        const sids = ctx.phoneToStudents[phone] || [];
+        let sid = '';
+        const pickedSid = String(r.studentId || '').trim();
+        if (pickedSid && sids.indexOf(pickedSid) >= 0) sid = pickedSid;
+        else if (name) sid = sids.filter(function (id) { return nameMatch_(ctx.students[id].name, name); })[0] || '';
         if (sid) {
           // Registered student used the drop-in form → count them as a regular check-in.
           personId = sid;
@@ -280,9 +286,17 @@ function markAttendance_(records) {
         } else {
           personType = 'Drop-in';
           drops = drops || loadDropins_(ss);
-          drop = drops.byPhone[phone] || null;
-          if (drop) { personId = drop.id; if (drop.name) name = drop.name; }
-          else isNewDrop = true;
+          const pool = (drops.byPhone[phone] || []).filter(function (x) { return !x.convertedTo; });
+          const pickedDrop = String(r.dropinId || '').trim();
+          drop = (pickedDrop && pool.filter(function (x) { return x.id === pickedDrop; })[0]) ||
+                 (name && pool.filter(function (x) { return nameMatch_(x.name, name); })[0]) || null;
+          if (drop) {
+            personId = drop.id;
+            if (drop.name) name = drop.name;
+          } else {
+            if (name.length < 2) return done('rejected', 'Please enter your full name.');
+            isNewDrop = true;
+          }
         }
       }
 
@@ -290,16 +304,16 @@ function markAttendance_(records) {
         const key = day + '|' + classId + '|' + personId;
         if (seenKey.has(key)) {
           return done('duplicate', (name || 'This person') + ' is already checked in for ' + cls.name + ' ' + when + '.',
-                      { personId: personId, name: name });
+            { personId: personId, name: name });
         }
       }
 
       if (personType === 'Drop-in') {
         if (isNewDrop) {
           drops.max += 1;
-          drop = { id: 'DROP-' + String(drops.max).padStart(3, '0'), name: name, phone: phone,
-                   firstSeen: day, lastSeen: day, visits: 0, row: 0, isNew: true, dirty: true };
-          drops.byPhone[phone] = drop;
+          drop = { id: 'DROP-' + String(drops.max).padStart(3, '0'), name: name, phone: phone, firstSeen: day, lastSeen: day,
+                   visits: 0, row: 0, convertedTo: '', isNew: true, dirty: true };
+          (drops.byPhone[phone] = drops.byPhone[phone] || []).push(drop);
           drops.created.push(drop);
           personId = drop.id;
         }
@@ -334,35 +348,39 @@ function context_(ss) {
     const id = String(r[0]).trim();
     if (id) classes[id] = { name: String(r[1]).trim() || id, active: isTrue_(r[7]) };
   });
-  const students = {}, phoneToStudent = {};
+  // phoneToStudents: phone → [student IDs] (several people can share one phone, e.g. siblings).
+  const students = {}, phoneToStudent = {}, phoneToStudents = {};
   rows_(ss, 'Students').forEach(function (r) {
     const id = String(r[0]).trim();
     if (!id) return;
     const status = String(r[5] || 'Active').trim();
     students[id] = { name: String(r[1]).trim(), active: status === 'Active' };
     const pk = phoneKey_(r[2]);
-    if (pk && status === 'Active' && !phoneToStudent[pk]) phoneToStudent[pk] = id;
+    if (pk && status === 'Active') {
+      if (!phoneToStudent[pk]) phoneToStudent[pk] = id;
+      (phoneToStudents[pk] = phoneToStudents[pk] || []).push(id);
+    }
   });
-  const enrolled = new Set(rows_(ss, 'Enrollments').map(function (r) {
-    return String(r[0]).trim() + '|' + String(r[1]).trim();
-  }));
-  return { classes: classes, students: students, phoneToStudent: phoneToStudent, enrolled: enrolled };
+  const enrolled = new Set(rows_(ss, 'Enrollments').map(function (r) { return String(r[0]).trim() + '|' + String(r[1]).trim(); }));
+  return { classes: classes, students: students, phoneToStudent: phoneToStudent, phoneToStudents: phoneToStudents, enrolled: enrolled };
 }
 
 function loadDropins_(ss) {
   const sh = sheet_(ss, 'Dropins') || ensureHeaders_(ss, 'Dropins', TABS.Dropins);
   const n = sh.getLastRow() - 1;
   const vals = n > 0 ? sh.getRange(2, 1, n, 8).getValues() : [];
-  const byPhone = {};
+  const byPhone = {}; // phone → [drop-in records]
   let max = 0;
   vals.forEach(function (r, i) {
     const id = String(r[0]).trim();
     const num = parseInt(id.replace(/\D/g, ''), 10);
     if (!isNaN(num)) max = Math.max(max, num);
     const pk = phoneKey_(r[2]);
-    if (id && pk && !byPhone[pk]) {
-      byPhone[pk] = { id: id, name: String(r[1]).trim(), phone: pk, firstSeen: fmtDate_(r[3]), lastSeen: fmtDate_(r[4]),
-                      visits: Number(r[5]) || 0, row: i + 2, isNew: false, dirty: false };
+    if (id && pk) {
+      (byPhone[pk] = byPhone[pk] || []).push({
+        id: id, name: String(r[1]).trim(), phone: pk, firstSeen: fmtDate_(r[3]), lastSeen: fmtDate_(r[4]),
+        visits: Number(r[5]) || 0, convertedTo: String(r[6] || '').trim(), row: i + 2, isNew: false, dirty: false
+      });
     }
   });
   return { sh: sh, byPhone: byPhone, max: max, created: [] };
@@ -370,8 +388,9 @@ function loadDropins_(ss) {
 
 function saveDropins_(d) {
   Object.keys(d.byPhone).forEach(function (k) {
-    const x = d.byPhone[k];
-    if (x.dirty && !x.isNew) d.sh.getRange(x.row, 4, 1, 3).setValues([[dateVal_(x.firstSeen), dateVal_(x.lastSeen), x.visits]]);
+    d.byPhone[k].forEach(function (x) {
+      if (x.dirty && !x.isNew) d.sh.getRange(x.row, 4, 1, 3).setValues([[dateVal_(x.firstSeen), dateVal_(x.lastSeen), x.visits]]);
+    });
   });
   if (d.created.length) {
     const rows = d.created.map(function (x) {
@@ -396,14 +415,23 @@ function register_(b) {
     const ss = SpreadsheetApp.getActive();
     const st = sheet_(ss, 'Students');
     const existing = rows_(ss, 'Students');
-
     if (phone) {
-      const dup = existing.filter(function (r) {
+      // v3: the same phone may be shared (siblings / family) — only the same NAME on the same phone is a duplicate.
+      const samePhone = existing.filter(function (r) {
         return String(r[5] || 'Active').trim() === 'Active' && phoneKey_(r[2]) === phone;
-      })[0];
-      if (dup) throw new Error('This phone number is already registered as ' + String(dup[1]).trim() + ' (' + String(dup[0]).trim() + ').');
+      });
+      const dup = samePhone.filter(function (r) { return nameMatch_(r[1], name); })[0];
+      if (dup) {
+        return { ok: false, code: 'ALREADY_REGISTERED', id: String(dup[0]).trim(), name: String(dup[1]).trim(),
+                 error: 'You are already registered as ' + String(dup[1]).trim() + ' (' + String(dup[0]).trim() + ').' };
+      }
+      if (samePhone.length && !b.confirmSharedPhone) {
+        const others = samePhone.map(function (r) { return { id: String(r[0]).trim(), name: shortName_(r[1]) }; });
+        return { ok: false, code: 'PHONE_SHARED', existing: others,
+                 error: 'This phone number is already used by ' + others.map(function (o) { return o.name; }).join(', ') +
+                        '. Are you registering a different person (e.g. a sibling)?' };
+      }
     }
-
     const max = existing.reduce(function (m, r) {
       const num = parseInt(String(r[0]).replace(/\D/g, ''), 10);
       return isNaN(num) ? m : Math.max(m, num);
@@ -421,11 +449,11 @@ function register_(b) {
       en.getRange(en.getLastRow() + 1, 1, enrol.length, 3).setValues(enrol);
     }
 
-    // A known drop-in has now registered: link the two records.
+    // A known drop-in (same phone AND same name) has now registered: link the two records.
     let convertedFrom;
     if (phone) {
       const d = loadDropins_(ss);
-      const x = d.byPhone[phone];
+      const x = (d.byPhone[phone] || []).filter(function (y) { return !y.convertedTo && nameMatch_(y.name, name); })[0];
       if (x) { d.sh.getRange(x.row, 7).setValue(id); convertedFrom = x.id; }
     }
 
@@ -533,4 +561,42 @@ function checkPin_(given) {
 
 function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+/* ---------------- v3: shared phones ---------------- */
+
+// Who is behind this phone? Used by the drop-in form to show a "Who's checking in?" picker.
+// Returns short names only (first name + initial) so a phone number doesn't reveal full names.
+function lookup_(raw) {
+  const phone = normalizePhone_(raw);
+  if (!phone) return { ok: false, error: 'Please enter a valid phone number.' };
+  const ss = SpreadsheetApp.getActive();
+  const ctx = context_(ss);
+  const d = loadDropins_(ss);
+  return {
+    ok: true,
+    phone: phone,
+    students: (ctx.phoneToStudents[phone] || []).map(function (id) { return { id: id, name: shortName_(ctx.students[id].name) }; }),
+    dropins: (d.byPhone[phone] || []).filter(function (x) { return !x.convertedTo; })
+      .map(function (x) { return { id: x.id, name: shortName_(x.name), visits: x.visits }; })
+  };
+}
+
+// Lower-case, letters only, single spaces: "  madhan  BABU " → "madhan babu"
+function nameKey_(s) {
+  return String(s == null ? '' : s).toLowerCase().replace(/[^\p{L}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Same person? Exact match after cleanup, or the same first name ("Madhan" ≈ "Madhan Babu").
+function nameMatch_(a, b) {
+  const x = nameKey_(a), y = nameKey_(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  return x.split(' ')[0] === y.split(' ')[0];
+}
+
+// "Aadhya Kumar" → "Aadhya K."
+function shortName_(s) {
+  const parts = String(s || '').trim().split(/\s+/);
+  return parts.length > 1 ? parts[0] + ' ' + parts[parts.length - 1].charAt(0).toUpperCase() + '.' : parts[0];
 }
